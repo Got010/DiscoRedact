@@ -19,3 +19,7 @@ local.properties
 # Captured Discord data: never commit a data package or a cURL capture
 *.zip
 captures/
+# Python
+__pycache__/
+# CI checkout of the base branch gate
+.gate-base/
