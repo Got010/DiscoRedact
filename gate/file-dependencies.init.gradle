@@ -1,0 +1,35 @@
+// Release gate helper (gate/gate.py, section 2 of the gate contract). Prints, for every project:
+//   gate-file-dependency: <project> <path>     files()/fileTree() dependencies of -Pgate.configuration=<c>
+//                                              (runtimeClasspath in a plain JVM project without <c>)
+//   gate-desugaring: <project> <group:module>  the coreLibraryDesugaring configuration
+//   gate-file-dependencies: done <project>     a marker, so a missing project is noticed
+// Usage: ./gradlew --init-script gate/file-dependencies.init.gradle -Pgate.configuration=<c> ... gateFileDependencies
+def gateConfiguration = gradle.startParameter.projectProperties['gate.configuration']
+if (!gateConfiguration) {
+    throw new GradleException('gate: pass -Pgate.configuration=<configuration>')
+}
+
+allprojects { p ->
+    p.tasks.register('gateFileDependencies') { t ->
+        // Collected when the task is configured (after every project is evaluated); printed when it runs.
+        List<String> lines = []
+        def rootPath = p.rootDir.toPath()
+        def conf = p.configurations.findByName(gateConfiguration)
+        if (conf == null && !p.plugins.hasPlugin('com.android.base')) {
+            conf = p.configurations.findByName('runtimeClasspath')
+        }
+        if (conf != null) {
+            conf.allDependencies.withType(FileCollectionDependency).each { dep ->
+                dep.files.files.each { f ->
+                    lines.add("gate-file-dependency: ${p.path} ${rootPath.relativize(f.toPath())}".toString())
+                }
+            }
+        }
+        def desugar = p.configurations.findByName('coreLibraryDesugaring')
+        if (desugar != null) {
+            desugar.allDependencies.each { d -> lines.add("gate-desugaring: ${p.path} ${d.group}:${d.name}".toString()) }
+        }
+        lines.add("gate-file-dependencies: done ${p.path}".toString())
+        t.doLast { lines.each { println it } }
+    }
+}

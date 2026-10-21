@@ -1,0 +1,11 @@
+{
+  "schema": 2,
+  "app": "DiscoRedact",
+  "variant": "release",
+  "dependencies": {"project": ":app", "configuration": "releaseRuntimeClasspath"},
+  "hosts": [],
+  "network_api": [],
+  "signing": {"cert_sha256": null},
+  "scan": {"extra_text_paths": []},
+  "notes": []
+}

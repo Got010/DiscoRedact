@@ -1,0 +1,38 @@
+# zizmor on the workflows (gate-baseline 6, item 2), hash-locked from .github/zizmor-requirements.txt.
+name: workflow-lint
+
+on:
+  pull_request:
+    paths:
+      - ".github/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/**"
+
+permissions: {}
+
+concurrency:
+  group: workflow-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  zizmor:
+    name: zizmor
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install zizmor (hash-locked)
+        run: |
+          python3 -m venv "$RUNNER_TEMP/zizmor"
+          "$RUNNER_TEMP/zizmor/bin/pip" install --require-hashes --only-binary :all: --no-deps -r .github/zizmor-requirements.txt
+
+      - name: Lint the workflows
+        run: '"$RUNNER_TEMP/zizmor/bin/zizmor" --offline --config .github/zizmor.yml .github/workflows'
