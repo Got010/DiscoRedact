@@ -24,6 +24,7 @@ fun DiscoRedactApp(vm: AppViewModel = viewModel()) {
             is Route.Frozen -> FrozenScreen(vm, r)
             Route.Settings -> SettingsScreen(vm)
             Route.Run -> RunScreen(vm)
+            Route.Credentials -> CredentialsScreen(vm)
         }
     }
 }
