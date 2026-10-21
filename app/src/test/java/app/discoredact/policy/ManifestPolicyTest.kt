@@ -19,12 +19,20 @@ class ManifestPolicyTest {
         (0 until childNodes.length).map { childNodes.item(it) }.filterIsInstance<Element>().filter { it.tagName == tag }
 
     @Test
-    fun internetIsTheOnlyRequestedPermission() {
+    fun exactlyTheExecutorsPermissionsAreRequested() {
         val m = parse("src/main/AndroidManifest.xml")
         val requested = (m.children("uses-permission") + m.children("uses-permission-sdk-23"))
             .filter { it.getAttributeNS(tools, "node") != "remove" }
             .map { it.getAttributeNS(android, "name") }
-        assertEquals(listOf("android.permission.INTERNET"), requested)
+        assertEquals(
+            listOf(
+                "android.permission.INTERNET",
+                "android.permission.FOREGROUND_SERVICE",
+                "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
+                "android.permission.POST_NOTIFICATIONS",
+            ),
+            requested,
+        )
         assertTrue(m.children("permission").all { it.getAttributeNS(tools, "node") == "remove" })
     }
 
@@ -43,9 +51,13 @@ class ManifestPolicyTest {
     }
 
     @Test
-    fun noServiceReceiverOrProviderOfOurOwn() {
+    fun theOnlyServiceOfOurOwnIsWorkManagersForegroundServiceGivenTheDataSyncType() {
         val app = parse("src/main/AndroidManifest.xml").children("application").single()
-        for (tag in listOf("service", "receiver", "provider")) assertTrue(tag, app.children(tag).isEmpty())
+        for (tag in listOf("receiver", "provider")) assertTrue(tag, app.children(tag).isEmpty())
+        val service = app.children("service").single()
+        assertEquals("androidx.work.impl.foreground.SystemForegroundService", service.getAttributeNS(android, "name"))
+        assertEquals("dataSync", service.getAttributeNS(android, "foregroundServiceType"))
+        assertEquals("merge", service.getAttributeNS(tools, "node"))
         assertEquals(1, app.children("activity").size)
     }
 }

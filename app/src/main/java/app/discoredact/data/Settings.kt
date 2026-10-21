@@ -16,6 +16,8 @@ data class AppSettings(
     val dryRunCompleted: Boolean = false,
     /** Set when an import starts, cleared when it completes; still set means the last import did not finish. */
     val importUnfinished: Boolean = false,
+    /** Run order within a channel: newest first (the spec's default) or oldest first. Applies to runs started after. */
+    val oldestFirst: Boolean = false,
 )
 
 /** Settings in a private SharedPreferences file (excluded from backup and device transfer like everything else). */
@@ -40,6 +42,7 @@ class SettingsStore(context: Context) {
             dryRun = if (prefs.contains(K_DRY)) prefs.getBoolean(K_DRY, true) else !completed,
             dryRunCompleted = completed,
             importUnfinished = prefs.getBoolean(K_IMPORT_UNFINISHED, false),
+            oldestFirst = prefs.getBoolean(K_OLDEST_FIRST, false),
         )
     }
 
@@ -57,6 +60,7 @@ class SettingsStore(context: Context) {
             .putInt(K_QUIET_END, next.pacing.quietHours.endMinute)
             .putBoolean(K_DRY, next.dryRun)
             .putBoolean(K_DRY_DONE, next.dryRunCompleted)
+            .putBoolean(K_OLDEST_FIRST, next.oldestFirst)
             .commit()
         state.value = read()
     }
@@ -75,5 +79,6 @@ class SettingsStore(context: Context) {
         const val K_DRY = "dry_run"
         const val K_DRY_DONE = "dry_run_completed"
         const val K_IMPORT_UNFINISHED = "import_unfinished"
+        const val K_OLDEST_FIRST = "oldest_first"
     }
 }
