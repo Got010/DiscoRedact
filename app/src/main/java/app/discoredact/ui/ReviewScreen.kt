@@ -136,8 +136,12 @@ fun FrozenScreen(vm: AppViewModel, r: Route.Frozen) {
                     color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall,
                 )
             }
+            val openRun by vm.openRunId.collectAsState()
+            if (openRun != null && openRun != r.runId) {
+                Text("Run #$openRun is still open (started, not finished). Stop it from the Run screen before starting this one.", color = MaterialTheme.colorScheme.error)
+            }
             vm.runNotice?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            Button(onClick = { vm.startRun(r.runId) }, modifier = Modifier.fillMaxWidth()) {
+            Button(onClick = { vm.startRun(r.runId) }, enabled = openRun == null || openRun == r.runId, modifier = Modifier.fillMaxWidth()) {
                 Text(if (settings.dryRun) "Start dry run" else "Start run (deletes for real)")
             }
             OutlinedButton(onClick = { vm.home() }, modifier = Modifier.fillMaxWidth()) { Text("Later (back to channels)") }

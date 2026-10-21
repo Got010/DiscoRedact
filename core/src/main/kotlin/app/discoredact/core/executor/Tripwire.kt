@@ -12,6 +12,11 @@ class Tripwire(private val windowMs: Long = 10 * 60 * 1000L, val limit: Int = 5)
         require(windowMs > 0 && limit > 0)
     }
 
+    /** Seeds the window from earlier responses (the event log), so a Pause, a Resume or a kill does not reset the count. */
+    fun seed(timestamps: Collection<Long>) {
+        for (t in timestamps.sorted()) stamps.addLast(t)
+    }
+
     /** Records an invalid response at [nowMs]; true when the run must halt. */
     fun record(nowMs: Long): Boolean {
         stamps.addLast(nowMs)

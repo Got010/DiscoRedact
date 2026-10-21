@@ -73,4 +73,23 @@ class ResponseClassifierTest {
         assertNull(ResponseClassifier.discordCode(Responses.html))
         assertNull(ResponseClassifier.discordCode(Responses.json(400, "[1,2]")))
     }
+
+    @Test fun aHeaderSetAdmitsPrintableAsciiOnlyAndNeverEchoesAValue() {
+        val secret = "SECRET\u00e9VALUE"
+        for (field in 0..4) {
+            val v = List(5) { "ok-value" }.toMutableList().also { it[field] = secret }
+            try {
+                HeaderSet(v[0], v[1], v[2], v[3], v[4], 0L); throw AssertionError("accepted field $field")
+            } catch (e: IllegalArgumentException) {
+                assertFalse(e.message!!.contains("SECRET"))
+                assertTrue(e.message!!.contains("printable ASCII"))
+            }
+        }
+        try {
+            HeaderSet("t", "ua", "props", " ", "tz", 0L); throw AssertionError()
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("blank"))
+        }
+        assertFalse(HeaderSet("TOKEN-X", "ua", "props", "en-US", "UTC", 1L).toString().contains("TOKEN-X"))
+    }
 }

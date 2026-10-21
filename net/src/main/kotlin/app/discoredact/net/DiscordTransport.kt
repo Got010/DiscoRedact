@@ -39,18 +39,30 @@ class DiscordTransport internal constructor(
             .addPathSegment("channels").addPathSegment(request.channelId.toString())
             .addPathSegment("messages").addPathSegment(request.messageId.toString())
             .build()
-        val req = Request.Builder()
-            .url(url)
-            .delete()
-            .header("Authorization", headers.authorization)
-            .header("User-Agent", headers.userAgent)
-            .header("X-Super-Properties", headers.superProperties)
-            .header("X-Discord-Locale", headers.locale)
-            .header("X-Discord-Timezone", headers.timezone)
-            .header("Origin", ORIGIN)
-            .header("Referer", "$ORIGIN/channels/@me/${request.channelId}")
-            .header("Accept", "*/*")
-            .build()
+        // HeaderSet admits printable ASCII only, so OkHttp's own check (whose message echoes a value) cannot fire;
+        // if it ever did, the exception is replaced by one that carries nothing (CLAUDE.md rule 9).
+        val req = try {
+            buildRequest(url, request, headers)
+        } catch (_: IllegalArgumentException) {
+            throw TransportException("invalid header value")
+        }
+        return sendBuilt(req)
+    }
+
+    /** The captured values verbatim, plus Origin and Referer (spec section 7); nothing else is added. */
+    private fun buildRequest(url: HttpUrl, request: DeleteRequest, headers: HeaderSet): Request = Request.Builder()
+        .url(url)
+        .delete()
+        .header("Authorization", headers.authorization)
+        .header("User-Agent", headers.userAgent)
+        .header("X-Super-Properties", headers.superProperties)
+        .header("X-Discord-Locale", headers.locale)
+        .header("X-Discord-Timezone", headers.timezone)
+        .header("Origin", ORIGIN)
+        .header("Referer", "$ORIGIN/channels/@me/${request.channelId}")
+        .build()
+
+    private fun sendBuilt(req: Request): ApiResponse {
         try {
             client.newCall(req).execute().use { response ->
                 val names = response.headers.names()

@@ -108,6 +108,9 @@ class FakeStore : RunStore {
     override fun dryVerdict(runId: Long, messageId: Long, verdict: DryVerdict) { verdicts[messageId] = verdict }
     override fun event(event: EventRecord) { events.add(event) }
     override fun deletedSince(sinceMs: Long): Int = deleteLog.count { it.second >= sinceMs }
+    override fun invalidResponseTimesSince(sinceMs: Long): List<Long> = events.filter {
+        it.ts >= sinceMs && (it.httpStatus == 401 || it.httpStatus == 403 || (it.httpStatus == 429 && it.actionTaken != "RATE_LIMITED shared"))
+    }.map { it.ts }
     override fun run(runId: Long): RunSnapshot? = runs[runId]?.let { RunSnapshot(it.startedAt, it.endedAt, it.stopReason) }
     override fun runStarted(runId: Long, now: Long) {
         val r = runs.getValue(runId); if (r.startedAt == null) r.startedAt = now; r.stopReason = null; r.notBefore = null

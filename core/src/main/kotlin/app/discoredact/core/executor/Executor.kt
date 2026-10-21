@@ -10,6 +10,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import java.time.LocalDateTime
 import java.time.ZoneId
 import kotlin.random.Random
@@ -98,6 +99,8 @@ class Executor(
         val frozen = StoreFrozenSet(store, runId)
         val now0 = clock.nowMs()
         store.runStarted(runId, now0)
+        // The tripwire's window survives a Pause, a Resume or a kill: it is seeded from the event log.
+        if (!dryRun) tripwire.seed(store.invalidResponseTimesSince(now0 - TRIPWIRE_WINDOW_MS))
         val sessionStart = now0
         var multiplier = 1L
         var transientFailures = 0
@@ -148,6 +151,7 @@ class Executor(
                 consecutiveGuardSkips = 0
                 store.dryVerdict(runId, candidate.messageId, DryVerdict.WOULD_DELETE)
                 log(runId, "DRY_WOULD_DELETE")
+                yield() // a dry run never waits, so this is where a Pause lands
                 continue
             }
 
@@ -343,8 +347,9 @@ class Executor(
         const val STOP_WAITING_CAP = "waiting:cap"
         const val STOP_WAITING_APP = "waiting:app"
         private const val MAX_GUARD_SKIPS = 10_000
+        const val TRIPWIRE_WINDOW_MS = 10 * 60 * 1000L
 
-        /** Whether a run in this state may be resumed by the user (not ended; not merely waiting for its own timer). */
+        /** Whether the user may resume a run in this state: not ended, and either started once or paused before starting. */
         fun isResumable(stopReason: String?, endedAt: Long?, startedAt: Long?): Boolean =
             endedAt == null && (startedAt != null || stopReason != null)
 

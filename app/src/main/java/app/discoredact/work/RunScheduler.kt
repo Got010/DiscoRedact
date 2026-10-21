@@ -26,10 +26,11 @@ class RunScheduler(context: Context) {
     }
 
     /** The next session at [atMs] (quiet hours, the daily cap). Replaces any earlier enqueue for the name. */
-    fun enqueueAt(runId: Long, atMs: Long) {
+    fun enqueueAt(runId: Long, atMs: Long, dryRun: Boolean) {
         val delay = (atMs - System.currentTimeMillis()).coerceAtLeast(0)
         val req = OneTimeWorkRequestBuilder<DeleteWorker>()
             .setInputData(workDataOf(DeleteWorker.KEY_RUN_ID to runId))
+            .setConstraints(if (dryRun) Constraints.NONE else Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .setInitialDelay(delay, TimeUnit.MILLISECONDS)
             .build()
         wm.enqueueUniqueWork(UNIQUE, ExistingWorkPolicy.REPLACE, req)

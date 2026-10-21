@@ -25,9 +25,10 @@ import kotlin.random.Random
 
 /**
  * Runs sessions of one run as a `dataSync` foreground worker. One worker, one request in flight (the executor, the
- * transport's lock and the unique work name all enforce it). The worker keeps its foreground service through the
- * breaks between sessions and ends only for quiet hours, the daily cap, a halt, a pause, a stop or the end of the
- * run; a kill or reboot leaves the per-message rows as the truth and the run resumable.
+ * transport's lock, the process-wide send mutex and the unique work name all enforce it). The worker keeps its
+ * foreground service through the breaks between sessions and ends only for quiet hours, the daily cap, its own
+ * time budget, a halt, a pause, a stop or the end of the run; a kill or reboot leaves the per-message rows as the
+ * truth and the run resumable.
  */
 class DeleteWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     private val graph = Graph.get(applicationContext)
@@ -38,13 +39,14 @@ class DeleteWorker(context: Context, params: WorkerParameters) : CoroutineWorker
     override suspend fun doWork(): Result {
         if (runId <= 0) return Result.failure()
         val options = withContext(Dispatchers.IO) { graph.repository.runOptions(runId) } ?: return Result.failure()
+        val title = if (options.dryRun) "Dry run" else "Deleting"
         try {
-            setForeground(foregroundInfo(if (options.dryRun) "Dry run" else "Deleting"))
+            setForeground(foregroundInfo(title))
         } catch (_: ForegroundServiceStartNotAllowedException) {
             // Android 12+ refuses a foreground service started from the background (a delayed enqueue firing while
             // the app is closed). Nothing is sent; the user opens the app, which resumes the run in the foreground.
             withContext(Dispatchers.IO) { graph.repository.markWaitingForApp(runId) }
-            notifyOpenApp()
+            notify("Open the app to continue", "Run #$runId is waiting; a run continues only while the app is open.")
             return Result.success()
         }
         val config = graph.settings.settings.value.pacing.toConfig()
@@ -54,30 +56,51 @@ class DeleteWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             store, transport, graph.credentials, config, SystemClock(), Sleeper { ms -> delay(ms) }, Random.Default,
             sendMutex = graph.sendMutex,
         )
+        val workerStart = System.currentTimeMillis()
         while (true) {
             val end = withContext(Dispatchers.IO) { executor.runSession(runId, options.dryRun, options.oldestFirst) }
             when (end) {
                 SessionEnd.Done -> {
                     if (options.dryRun) graph.settings.update { it.copy(dryRunCompleted = true, dryRun = false) }
+                    notify("Run #$runId finished", if (options.dryRun) "The dry run is complete; open the app for its report." else "Every message of the run is settled.")
                     return Result.success()
                 }
                 is SessionEnd.Break -> {
                     // The break is waited here, foreground service kept: a fresh session could not start from the
-                    // background. The daily cap keeps the day's running time far under the dataSync budget.
+                    // background. The worker's own time budget (below) keeps a day under the dataSync allowance.
+                    if (System.currentTimeMillis() - workerStart + end.breakMs > WORKER_BUDGET_MS) {
+                        withContext(Dispatchers.IO) { graph.repository.markWaitingForApp(runId) }
+                        notify("Open the app to continue", "Run #$runId paused after ${WORKER_BUDGET_MS / 3_600_000} hours of background work; it continues on the next open.")
+                        return Result.success()
+                    }
                     setForeground(foregroundInfo("Break", "Next session in about ${end.breakMs / 60_000} minutes"))
                     delay(end.breakMs)
+                    setForeground(foregroundInfo(title))
                 }
                 is SessionEnd.QuietUntil -> {
                     withContext(Dispatchers.IO) { graph.repository.markWaiting(runId, Executor.STOP_WAITING_QUIET, end.untilMs) }
-                    RunScheduler(applicationContext).enqueueAt(runId, end.untilMs)
+                    RunScheduler(applicationContext).enqueueAt(runId, end.untilMs, options.dryRun)
                     return Result.success()
                 }
                 is SessionEnd.CapUntil -> {
                     withContext(Dispatchers.IO) { graph.repository.markWaiting(runId, Executor.STOP_WAITING_CAP, end.untilMs) }
-                    RunScheduler(applicationContext).enqueueAt(runId, end.untilMs)
+                    RunScheduler(applicationContext).enqueueAt(runId, end.untilMs, options.dryRun)
                     return Result.success()
                 }
-                is SessionEnd.Halted, SessionEnd.PausedTransient, SessionEnd.Stopped, SessionEnd.NoCredentials -> return Result.success()
+                is SessionEnd.Halted -> {
+                    // Spec section 9: halt and notify. Reason and status only, never a header or a message's text.
+                    notify("Run #$runId halted", Executor.describe(end.reason.stopReason, null, workerStart))
+                    return Result.success()
+                }
+                SessionEnd.PausedTransient -> {
+                    notify("Run #$runId paused", "Repeated server or network errors; open the app to resume.")
+                    return Result.success()
+                }
+                SessionEnd.NoCredentials -> {
+                    notify("Run #$runId paused", "No credentials stored; nothing was sent.")
+                    return Result.success()
+                }
+                SessionEnd.Stopped -> return Result.success()
             }
         }
     }
@@ -100,18 +123,21 @@ class DeleteWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             .setContentText(text ?: "Run #$runId")
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
             .setContentIntent(openApp())
             .build()
         return ForegroundInfo(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
     }
 
-    private fun notifyOpenApp() {
+    /** A one-off notice when the worker ends for a reason the user should know about. */
+    private fun notify(title: String, text: String) {
         val nm = applicationContext.getSystemService(NotificationManager::class.java)
         channel(nm)
         val n = Notification.Builder(applicationContext, CHANNEL)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
-            .setContentTitle("DiscoRedact: open the app to continue")
-            .setContentText("Run #$runId is waiting; a run can only continue while the app is open.")
+            .setContentTitle("DiscoRedact: $title")
+            .setContentText(text)
+            .setStyle(Notification.BigTextStyle().bigText(text))
             .setAutoCancel(true)
             .setContentIntent(openApp())
             .build()
@@ -122,5 +148,8 @@ class DeleteWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         const val KEY_RUN_ID = "run_id"
         const val CHANNEL = "runs"
         const val NOTIFICATION_ID = 1001
+
+        /** One worker's foreground time, breaks included, stays well under Android's 6-hour dataSync allowance per day. */
+        const val WORKER_BUDGET_MS = 4L * 60 * 60 * 1000
     }
 }

@@ -54,6 +54,8 @@ class RoomRunStore(private val db: AppDatabase) : RunStore {
 
     override fun deletedSince(sinceMs: Long): Int = runs.deletedSince(sinceMs)
 
+    override fun invalidResponseTimesSince(sinceMs: Long): List<Long> = runs.invalidResponseTimesSince(sinceMs)
+
     override fun run(runId: Long): RunSnapshot? = runs.snapshot(runId)?.let { RunSnapshot(it.startedAt, it.endedAt, it.stopReason) }
 
     override fun runStarted(runId: Long, now: Long) {

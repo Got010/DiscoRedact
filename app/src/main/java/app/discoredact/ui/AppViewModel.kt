@@ -170,6 +170,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val workState: StateFlow<RunScheduler.WorkState> =
         scheduler.observeActive().stateIn(viewModelScope, SharingStarted.Eagerly, RunScheduler.WorkState.NONE)
+
+    /** The run that is started and not ended, if any; another run cannot start until it is stopped. */
+    val openRunId: StateFlow<Long?> =
+        generation.flatMapLatest { repo.observeOpenRunId() }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
     val deletedToday: StateFlow<Int> =
         generation.flatMapLatest { repo.observeDeletedSince(LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()) }
             .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
@@ -430,6 +434,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val s = settings.value
         viewModelScope.launch {
             try {
+                // An interrupted, paused, halted or waiting run comes first (brief decision 1): Stop it to start another.
+                val open = withContext(Dispatchers.IO) { repo.openRunId() }
+                if (open != null && open != runId) {
+                    runNotice = "Run #$open is still open. Stop it (or let it finish) before starting another."
+                    return@launch
+                }
+                // A real run needs a complete header set; without one nothing starts (brief decision 5).
+                if (!s.dryRun && graph.credentials.load() == null) {
+                    runNotice = "No credentials stored, so a real run cannot start (milestone 3). Switch Dry run on, or import credentials first. Nothing was started."
+                    return@launch
+                }
                 val options = withContext(Dispatchers.IO) { repo.prepareRun(runId, s.dryRun, s.oldestFirst) }
                 scheduler.start(runId, options.dryRun)
                 runNotice = null
@@ -457,6 +472,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 runNotice = "Not before ${formatTime(hold)}."
                 return@launch
             }
+            if (!options.dryRun && graph.credentials.load() == null) {
+                runNotice = "No credentials stored, so this real run cannot continue (milestone 3). Nothing was started."
+                return@launch
+            }
             scheduler.start(runId, options.dryRun)
             runNotice = null
         }
@@ -480,12 +499,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun onAppForeground() {
         viewModelScope.launch {
-            val p = runProgress.value ?: return@launch
-            if (p.endedAt != null || p.stopReason?.startsWith("waiting:") != true) return@launch
-            val hold = p.resumeNotBefore
-            if (hold != null && hold > System.currentTimeMillis()) return@launch
-            val options = withContext(Dispatchers.IO) { repo.runOptions(p.runId) } ?: return@launch
-            scheduler.start(p.runId, options.dryRun)
+            // Read the rows directly: on a cold open the observed flows have not emitted yet.
+            val resume = withContext(Dispatchers.IO) {
+                val id = repo.currentRunId() ?: return@withContext null
+                val snap = repo.runSnapshot(id) ?: return@withContext null
+                if (snap.endedAt != null || snap.stopReason?.startsWith("waiting:") != true) return@withContext null
+                val options = repo.runOptions(id) ?: return@withContext null
+                val hold = options.resumeNotBefore
+                if (hold != null && hold > System.currentTimeMillis()) return@withContext null
+                if (!options.dryRun && graph.credentials.load() == null) return@withContext null
+                id to options.dryRun
+            } ?: return@launch
+            scheduler.start(resume.first, resume.second)
         }
     }
 }

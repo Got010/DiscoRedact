@@ -14,9 +14,11 @@ class HeaderSet(
     val capturedAt: Long,
 ) {
     init {
-        require(authorization.isNotBlank() && userAgent.isNotBlank() && superProperties.isNotBlank()) { "incomplete header set" }
-        require(listOf(authorization, userAgent, superProperties, locale, timezone).none { it.any { c -> c == '\r' || c == '\n' } }) {
-            "header values must not contain line breaks"
+        // Every value present and printable ASCII: OkHttp rejects anything else with an exception that echoes the
+        // value, which must never happen to a header (CLAUDE.md rule 9). The messages here name the field only.
+        for ((name, value) in listOf("Authorization" to authorization, "User-Agent" to userAgent, "X-Super-Properties" to superProperties, "X-Discord-Locale" to locale, "X-Discord-Timezone" to timezone)) {
+            require(value.isNotBlank()) { "header set incomplete: $name is blank" }
+            require(value.all { it in ' '..'~' }) { "header set invalid: $name has a character outside printable ASCII" }
         }
     }
 
