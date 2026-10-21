@@ -1,0 +1,21 @@
+# Gradle
+.gradle/
+build/
+**/build/
+!gradle/wrapper/gradle-wrapper.jar
+# Android
+local.properties
+*.apk
+*.aab
+*.keystore
+*.jks
+*.p12
+# IDE
+.idea/
+*.iml
+.kotlin/
+# OS
+.DS_Store
+# Captured Discord data: never commit a data package or a cURL capture
+*.zip
+captures/
