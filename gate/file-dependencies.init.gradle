@@ -1,0 +1,28 @@
+// Lists what `gradle dependencies` can't show, for gate/gate.py: file dependencies (files(), fileTree())
+// on the gated runtime classpath of every project (or, in a plain JVM module that has no such
+// configuration, on runtimeClasspath), and core library desugaring modules. It lists every project's,
+// whether or not the app depends on it: over-inclusive, never short.
+//
+//   ./gradlew --init-script gate/file-dependencies.init.gradle -Pgate.configuration=releaseRuntimeClasspath gateFileDependencies
+allprojects { p ->
+    p.tasks.register('gateFileDependencies') { task ->
+        def configurationName = p.findProperty('gate.configuration')
+        def lines = [] as SortedSet
+        if (configurationName) {
+            def root = p.rootDir.toPath()
+            def configuration = p.configurations.findByName(configurationName) ?: p.configurations.findByName('runtimeClasspath')
+            configuration?.allDependencies?.withType(FileCollectionDependency)?.each { d ->
+                d.files.files.each { f -> lines << ('gate-file-dependency: ' + root.relativize(f.toPath()).toString().replace('\\', '/')) }
+            }
+            p.configurations.findByName('coreLibraryDesugaring')?.allDependencies?.each { d ->
+                lines << ('gate-desugaring: ' + (d.group ? "${d.group}:${d.name}" : d.name))
+            }
+        }
+        def projectPath = p.path
+        task.doLast {
+            if (!configurationName) throw new GradleException('pass -Pgate.configuration=<variant>RuntimeClasspath')
+            lines.each { println it }
+            println "gate-file-dependencies: done ${projectPath}"
+        }
+    }
+}

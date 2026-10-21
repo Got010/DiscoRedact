@@ -1,0 +1,214 @@
+# Build, test and gate the release APK (gate-baseline 5.1, 5.3, 5.4, 6). Milestone 1: no signing, no publishing.
+# The release APK is built unsigned; the gate compares it with gate/baseline.json. A test copy signed with a
+# throwaway key (made in this job, deleted after use, never a secret) is uploaded for the owner's phone checks only.
+name: build
+
+on:
+  pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - ".github/workflows/workflow-lint.yml"
+      - ".github/zizmor*"
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - ".github/workflows/workflow-lint.yml"
+      - ".github/zizmor*"
+
+permissions: {}
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  GATE_CONFIGURATION: releaseRuntimeClasspath
+  GRADLE_VERSION: "8.14.3"
+  UNSIGNED_APK: app/build/outputs/apk/release/app-release-unsigned.apk
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out the base branch's gate (pull requests)
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .gate-base
+          sparse-checkout: gate
+          persist-credentials: false
+
+      - name: Use the runner's JDK 17
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_17_X64/bin" >> "$GITHUB_PATH"
+
+      - name: Verify the Gradle wrapper against gradle.org
+        run: |
+          set -euo pipefail
+          want_dist=$(curl -fsSL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip.sha256")
+          want_jar=$(curl -fsSL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-wrapper.jar.sha256")
+          have_url=$(sed -n 's/^distributionUrl=//p' gradle/wrapper/gradle-wrapper.properties)
+          have_dist=$(sed -n 's/^distributionSha256Sum=//p' gradle/wrapper/gradle-wrapper.properties)
+          have_jar=$(sha256sum gradle/wrapper/gradle-wrapper.jar | cut -d' ' -f1)
+          if [ "$have_url" != "https\://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" ]; then
+            echo "::error::distributionUrl is not Gradle ${GRADLE_VERSION}: $have_url"; exit 1
+          fi
+          if [ "$have_dist" != "$want_dist" ]; then
+            echo "::error::distributionSha256Sum ($have_dist) is not Gradle's published checksum ($want_dist)"; exit 1
+          fi
+          if [ "$have_jar" != "$want_jar" ]; then
+            echo "::error::gradle-wrapper.jar ($have_jar) is not Gradle's published wrapper jar ($want_jar)"; exit 1
+          fi
+          echo "Gradle ${GRADLE_VERSION} wrapper and distribution checksums match gradle.org."
+
+      - name: Build, test and report dependencies
+        id: gradle
+        run: |
+          set -o pipefail
+          if [ -f gradle/verification-metadata.xml ]; then
+            verify=(--dependency-verification=strict)
+            echo "metadata=present" >> "$GITHUB_OUTPUT"
+          else
+            verify=(--write-verification-metadata sha256)
+            echo "metadata=written" >> "$GITHUB_OUTPUT"
+          fi
+          ./gradlew --no-daemon --stacktrace "${verify[@]}" \
+            --init-script gate/file-dependencies.init.gradle -Pgate.configuration="$GATE_CONFIGURATION" \
+            :core:test :app:testReleaseUnitTest :app:assembleRelease \
+            :app:dependencies --configuration "$GATE_CONFIGURATION" gateFileDependencies \
+            | tee "$RUNNER_TEMP/gradle.log"
+
+      - name: Check the Room schema is committed
+        id: schema
+        if: ${{ !cancelled() && steps.gradle.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          changed=$(git ls-files --others --modified --exclude-standard -- app/schemas)
+          if [ -z "$changed" ]; then
+            echo "state=committed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "state=changed" >> "$GITHUB_OUTPUT"
+          for f in $changed; do
+            echo "::group::$f"
+            cat "$f"
+            echo
+            echo "::endgroup::"
+            gate/annotate-file.sh "$f" "room-schema-$(basename "$f" .json)" 0
+          done
+
+      - name: Release gate
+        id: gate
+        if: ${{ !cancelled() && steps.gradle.outcome == 'success' }}
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -uo pipefail
+          if [ ! -f "$UNSIGNED_APK" ]; then
+            echo "::error::$UNSIGNED_APK is missing (a build that signs would be noticed here)"
+            exit 1
+          fi
+          args=(check --require-tools --apk "$UNSIGNED_APK" --deps "$RUNNER_TEMP/gradle.log" --generated build/gate/baseline.generated.json)
+          if [ "$EVENT" = pull_request ]; then
+            args+=(--compare-to .gate-base/gate/baseline.json)
+          fi
+          rc=0
+          python3 gate/gate.py "${args[@]}" || rc=$?
+          python3 -m unittest discover -s gate || rc=1
+          exit "$rc"
+
+      - name: Print the baseline this APK would need
+        if: ${{ failure() && steps.gate.outcome == 'failure' && hashFiles('build/gate/baseline.generated.json') != '' }}
+        run: |
+          echo "::group::build/gate/baseline.generated.json"
+          cat build/gate/baseline.generated.json
+          echo "::endgroup::"
+          gate/annotate-file.sh build/gate/baseline.generated.json baseline-generated 0
+
+      - name: Print the written verification metadata (chunks 1-10)
+        if: ${{ !cancelled() && steps.gradle.outputs.metadata == 'written' && hashFiles('gradle/verification-metadata.xml') != '' }}
+        run: gate/annotate-file.sh gradle/verification-metadata.xml verification-metadata-build 0
+
+      - name: Print the written verification metadata (chunks 11-20)
+        if: ${{ !cancelled() && steps.gradle.outputs.metadata == 'written' && hashFiles('gradle/verification-metadata.xml') != '' }}
+        run: gate/annotate-file.sh gradle/verification-metadata.xml verification-metadata-build 10
+
+      - name: Print the written verification metadata (chunks 21-30)
+        if: ${{ !cancelled() && steps.gradle.outputs.metadata == 'written' && hashFiles('gradle/verification-metadata.xml') != '' }}
+        run: gate/annotate-file.sh gradle/verification-metadata.xml verification-metadata-build 20
+
+      - name: Upload the written verification metadata
+        if: ${{ !cancelled() && steps.gradle.outputs.metadata == 'written' && hashFiles('gradle/verification-metadata.xml') != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: verification-metadata-build
+          path: gradle/verification-metadata.xml
+          retention-days: 3
+
+      - name: Sign a test copy with a throwaway key (phone checks only, never published)
+        id: testsign
+        if: ${{ !cancelled() && steps.gate.outcome == 'success' }}
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          bt=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          ks="$RUNNER_TEMP/throwaway.p12"
+          trap 'rm -f "$ks"' EXIT
+          keytool -genkeypair -keystore "$ks" -storetype PKCS12 -storepass throwaway -keypass throwaway \
+            -alias test -keyalg RSA -keysize 3072 -validity 30 -dname "CN=DiscoRedact test build, O=not for release"
+          mkdir -p build/test-apk
+          out="build/test-apk/discoredact-${SHA:0:7}-test-key.apk"
+          "$bt/zipalign" -P 16 -f 4 "$UNSIGNED_APK" "$RUNNER_TEMP/aligned.apk"
+          "$bt/apksigner" sign --ks "$ks" --ks-type PKCS12 --ks-pass pass:throwaway --key-pass pass:throwaway \
+            --v1-signing-enabled false --v2-signing-enabled true --v3-signing-enabled false --v4-signing-enabled false \
+            --out "$out" "$RUNNER_TEMP/aligned.apk"
+          rm -f "$ks"
+          "$bt/zipalign" -c -P 16 4 "$out"
+          "$bt/apksigner" verify --print-certs -v "$out" | tee "$RUNNER_TEMP/verify.txt"
+          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" "$RUNNER_TEMP/verify.txt"
+          sha256sum "$out" "$UNSIGNED_APK"
+
+      - name: Upload the APKs
+        if: ${{ !cancelled() && steps.gate.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: apks
+          path: |
+            app/build/outputs/apk/release/app-release-unsigned.apk
+            build/test-apk/*.apk
+          retention-days: 14
+
+      - name: Upload test reports
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: reports
+          path: |
+            core/build/reports/tests/
+            app/build/reports/tests/
+            build/gate/
+          retention-days: 3
+
+      - name: Fail when generated files must be committed
+        if: ${{ !cancelled() && (steps.gradle.outputs.metadata == 'written' || steps.schema.outputs.state == 'changed') }}
+        env:
+          METADATA: ${{ steps.gradle.outputs.metadata }}
+          SCHEMA: ${{ steps.schema.outputs.state }}
+        run: |
+          echo "::error::Generated files must be committed: verification metadata $METADATA, Room schema $SCHEMA (see the notices above)."
+          exit 1
