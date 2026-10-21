@@ -2,8 +2,8 @@ package app.discoredact
 
 import android.content.Context
 import app.discoredact.core.executor.CredentialStore
-import app.discoredact.core.executor.EmptyCredentialStore
 import app.discoredact.core.executor.RunStore
+import app.discoredact.data.KeystoreCredentialStore
 import app.discoredact.core.executor.Transport
 import app.discoredact.data.AppDatabase
 import app.discoredact.data.ImportRunner
@@ -42,8 +42,9 @@ class Graph private constructor(private val context: Context) {
     /** The one network client of the app (M2). Built on first use; a dry run never touches it. */
     val transport: Transport by lazy { DiscordTransport.production() }
 
-    /** No header set can be stored until M3: a real run refuses to start (the executor returns NoCredentials). */
-    val credentials: CredentialStore = EmptyCredentialStore
+    /** The captured header set, AES-GCM under an Android Keystore key (M3). The executor reads it through [credentials]. */
+    val credentialStore = KeystoreCredentialStore(context)
+    val credentials: CredentialStore get() = credentialStore
 
     /** One lock for every executor in this process: the guard re-read, the send and its row never interleave. */
     val sendMutex = Mutex()
@@ -57,6 +58,7 @@ class Graph private constructor(private val context: Context) {
         repo = null
         check(context.deleteDatabase(AppDatabase.NAME) || !context.getDatabasePath(AppDatabase.NAME).exists()) { "database not deleted" }
         settings.clear()
+        credentialStore.wipe()
     }
 
     companion object {

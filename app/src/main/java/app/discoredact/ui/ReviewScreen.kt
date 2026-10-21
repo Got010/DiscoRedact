@@ -130,10 +130,15 @@ fun FrozenScreen(vm: AppViewModel, r: Route.Frozen) {
                 Switch(checked = settings.oldestFirst, onCheckedChange = { vm.setOldestFirst(it) })
             }
             if (!settings.dryRun) {
+                val cred = vm.credentialStatus
                 Text(
-                    "A real run needs the captured headers of the alt's browser session. This version cannot store them yet " +
-                        "(milestone 3): a real run starts, finds no credentials, sends nothing and pauses.",
-                    color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall,
+                    when {
+                        cred == null -> "A real run needs the captured headers of the alt's browser session, and none are stored. Import them on the Credentials screen (Settings) first; a real run without them sends nothing."
+                        cred.stale -> "The stored credentials are over 14 days old (captured ${cred.ageDays} days ago). Capture again before a real run."
+                        else -> "Credentials captured ${cred.ageDays} days ago. A real run deletes for real, one request at a time."
+                    },
+                    color = if (cred?.stale != false) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.bodySmall,
                 )
             }
             val openRun by vm.openRunId.collectAsState()

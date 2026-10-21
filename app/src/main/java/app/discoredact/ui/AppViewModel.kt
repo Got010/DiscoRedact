@@ -15,7 +15,10 @@ import app.discoredact.core.pacing.PacingPreset
 import app.discoredact.core.pacing.QuietHours
 import app.discoredact.core.selection.DeletePlan
 import app.discoredact.core.selection.MessageFilter
+import app.discoredact.core.executor.CredentialStatus
+import app.discoredact.core.executor.CurlParser
 import app.discoredact.core.executor.Executor
+import app.discoredact.core.executor.HeaderSet
 import app.discoredact.data.AppSettings
 import app.discoredact.data.ChannelSummary
 import app.discoredact.data.EventEntity
@@ -54,6 +57,7 @@ sealed interface Route {
     data class Frozen(val runId: Long, val total: Int, val channels: Int) : Route
     data object Settings : Route
     data object Run : Route
+    data object Credentials : Route
 }
 
 /** Loads a long list a page at a time (no Paging dependency). Pages load off the main thread. */
@@ -181,6 +185,66 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** A message for the Run screen. */
     var runNotice by mutableStateOf<String?>(null)
 
+    // ---- Credentials (M3): the status only, never a value. ------------------------------------------------------
+
+    var credentialStatus by mutableStateOf<CredentialStatus?>(null)
+        private set
+    var credentialNotice by mutableStateOf<String?>(null)
+    var credentialsBusy by mutableStateOf(false)
+        private set
+
+    fun refreshCredentialStatus() {
+        viewModelScope.launch { credentialStatus = withContext(Dispatchers.IO) { graph.credentialStore.status() } }
+    }
+
+    /** Parses a "Copy as cURL" text (or a pasted headers panel) and stores the five headers. The text is not kept. */
+    fun importCurl(text: String) = storeHeaders {
+        val parsed = CurlParser.parse(text)
+        if (!parsed.complete) return@storeHeaders null to "Not found in the paste: ${parsed.missing.joinToString(", ")}. Copy a request to Discord's API as cURL from the browser's Network panel, or fill the fields by hand."
+        parsed.toHeaderSet(System.currentTimeMillis())?.let { it to null }
+            ?: (null to "A value is not usable (every field must be present and plain ASCII). Nothing was stored.")
+    }
+
+    /** The manual form: the five fields typed or pasted one by one. */
+    fun importManual(authorization: String, userAgent: String, superProperties: String, locale: String, timezone: String) = storeHeaders {
+        try {
+            HeaderSet(authorization.trim(), userAgent.trim(), superProperties.trim(), locale.trim(), timezone.trim(), System.currentTimeMillis()) to null
+        } catch (e: IllegalArgumentException) {
+            null to (e.message ?: "invalid")
+        }
+    }
+
+    private fun storeHeaders(build: () -> Pair<HeaderSet?, String?>) {
+        if (credentialsBusy) return
+        credentialsBusy = true
+        viewModelScope.launch {
+            try {
+                val (headers, problem) = build()
+                if (headers == null) {
+                    credentialNotice = problem
+                    return@launch
+                }
+                withContext(Dispatchers.IO) { graph.credentialStore.save(headers) }
+                credentialNotice = "Stored: Authorization, User-Agent, X-Super-Properties, X-Discord-Locale, X-Discord-Timezone. Captured now."
+                refreshCredentialStatus()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                credentialNotice = "Could not store the credentials: ${e.javaClass.simpleName}. Nothing was kept."
+            } finally {
+                credentialsBusy = false
+            }
+        }
+    }
+
+    fun wipeCredentials() {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { graph.credentialStore.wipe() }
+            credentialNotice = "Credentials wiped from this phone. Log out of the browser session too; that invalidates the token."
+            refreshCredentialStatus()
+        }
+    }
+
     /** Mirrors the process-wide import (Graph.imports), so a ViewModel made while an import runs shows it. */
     var importState by mutableStateOf(graph.imports.state.value)
         private set
@@ -211,6 +275,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             is Route.Browser -> browser = BrowserState(route.channelId, this)
             is Route.Filters -> filters = FilterState(route.channelId).also { schedulePreview(it) }
             Route.Review -> startReview()
+            Route.Credentials -> { credentialNotice = null; refreshCredentialStatus() }
+            is Route.Frozen -> refreshCredentialStatus()
             else -> Unit
         }
         backStack.add(route)
@@ -446,8 +512,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     return@launch
                 }
                 // A real run needs a complete header set; without one nothing starts (brief decision 5).
-                if (!s.dryRun && graph.credentials.load() == null) {
-                    runNotice = "No credentials stored, so a real run cannot start (milestone 3). Switch Dry run on, or import credentials first. Nothing was started."
+                if (!s.dryRun && withContext(Dispatchers.IO) { graph.credentials.load() } == null) {
+                    runNotice = "No credentials stored, so a real run cannot start. Import them on the Credentials screen (Settings), or switch Dry run on. Nothing was started."
                     return@launch
                 }
                 val options = withContext(Dispatchers.IO) { repo.prepareRun(runId, s.dryRun, s.oldestFirst) }
@@ -477,8 +543,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 runNotice = "Not before ${formatTime(hold)}."
                 return@launch
             }
-            if (!options.dryRun && graph.credentials.load() == null) {
-                runNotice = "No credentials stored, so this real run cannot continue (milestone 3). Nothing was started."
+            if (!options.dryRun && withContext(Dispatchers.IO) { graph.credentials.load() } == null) {
+                runNotice = "No credentials stored, so this real run cannot continue. Import them on the Credentials screen (Settings). Nothing was started."
                 return@launch
             }
             scheduler.start(runId, options.dryRun)

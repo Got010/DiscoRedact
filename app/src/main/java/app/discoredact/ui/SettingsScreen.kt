@@ -94,6 +94,11 @@ fun SettingsScreen(vm: AppViewModel) {
             }
 
             HorizontalDivider()
+            Text("Credentials", style = MaterialTheme.typography.titleMedium)
+            Text(credentialSummary(vm.credentialStatus), style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = { vm.go(Route.Credentials) }, modifier = Modifier.fillMaxWidth()) { Text("Credentials: import, status, wipe") }
+
+            HorizontalDivider()
             Text("Quiet hours (no requests)", style = MaterialTheme.typography.titleMedium)
             val q = settings.pacing.quietHours
             HourStepper("Start", q.startMinute) { vm.setQuietHours(QuietHours(it, q.endMinute)) }
