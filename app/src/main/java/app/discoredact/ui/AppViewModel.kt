@@ -440,6 +440,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     runNotice = "Run #$open is still open. Stop it (or let it finish) before starting another."
                     return@launch
                 }
+                // A run that has already started is resumed, never started again (the hold after an edge block applies).
+                if (withContext(Dispatchers.IO) { repo.runSnapshot(runId)?.startedAt } != null) {
+                    resumeRun(runId)
+                    return@launch
+                }
                 // A real run needs a complete header set; without one nothing starts (brief decision 5).
                 if (!s.dryRun && graph.credentials.load() == null) {
                     runNotice = "No credentials stored, so a real run cannot start (milestone 3). Switch Dry run on, or import credentials first. Nothing was started."

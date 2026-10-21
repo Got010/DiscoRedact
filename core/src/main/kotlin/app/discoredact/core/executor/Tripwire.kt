@@ -12,8 +12,12 @@ class Tripwire(private val windowMs: Long = 10 * 60 * 1000L, val limit: Int = 5)
         require(windowMs > 0 && limit > 0)
     }
 
-    /** Seeds the window from earlier responses (the event log), so a Pause, a Resume or a kill does not reset the count. */
+    /**
+     * Replaces the window with earlier responses (the event log), so a Pause, a Resume or a kill does not reset the
+     * count. It replaces rather than appends: a session re-seeded after a break must not count a response twice.
+     */
     fun seed(timestamps: Collection<Long>) {
+        stamps.clear()
         for (t in timestamps.sorted()) stamps.addLast(t)
     }
 
