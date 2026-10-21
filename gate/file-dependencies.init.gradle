@@ -1,35 +1,28 @@
-// Release gate helper (gate/gate.py, section 2 of the gate contract). Prints, for every project:
-//   gate-file-dependency: <project> <path>     files()/fileTree() dependencies of -Pgate.configuration=<c>
-//                                              (runtimeClasspath in a plain JVM project without <c>)
-//   gate-desugaring: <project> <group:module>  the coreLibraryDesugaring configuration
-//   gate-file-dependencies: done <project>     a marker, so a missing project is noticed
-// Usage: ./gradlew --init-script gate/file-dependencies.init.gradle -Pgate.configuration=<c> ... gateFileDependencies
-def gateConfiguration = gradle.startParameter.projectProperties['gate.configuration']
-if (!gateConfiguration) {
-    throw new GradleException('gate: pass -Pgate.configuration=<configuration>')
-}
-
+// Lists what `gradle dependencies` can't show, for gate/gate.py: file dependencies (files(), fileTree())
+// on the gated runtime classpath of every project (or, in a plain JVM module that has no such
+// configuration, on runtimeClasspath), and core library desugaring modules. It lists every project's,
+// whether or not the app depends on it: over-inclusive, never short.
+//
+//   ./gradlew --init-script gate/file-dependencies.init.gradle -Pgate.configuration=releaseRuntimeClasspath gateFileDependencies
 allprojects { p ->
-    p.tasks.register('gateFileDependencies') { t ->
-        // Collected when the task is configured (after every project is evaluated); printed when it runs.
-        List<String> lines = []
-        def rootPath = p.rootDir.toPath()
-        def conf = p.configurations.findByName(gateConfiguration)
-        if (conf == null && !p.plugins.hasPlugin('com.android.base')) {
-            conf = p.configurations.findByName('runtimeClasspath')
-        }
-        if (conf != null) {
-            conf.allDependencies.withType(FileCollectionDependency).each { dep ->
-                dep.files.files.each { f ->
-                    lines.add("gate-file-dependency: ${p.path} ${rootPath.relativize(f.toPath())}".toString())
-                }
+    p.tasks.register('gateFileDependencies') { task ->
+        def configurationName = p.findProperty('gate.configuration')
+        def lines = [] as SortedSet
+        if (configurationName) {
+            def root = p.rootDir.toPath()
+            def configuration = p.configurations.findByName(configurationName) ?: p.configurations.findByName('runtimeClasspath')
+            configuration?.allDependencies?.withType(FileCollectionDependency)?.each { d ->
+                d.files.files.each { f -> lines << ('gate-file-dependency: ' + root.relativize(f.toPath()).toString().replace('\\', '/')) }
+            }
+            p.configurations.findByName('coreLibraryDesugaring')?.allDependencies?.each { d ->
+                lines << ('gate-desugaring: ' + (d.group ? "${d.group}:${d.name}" : d.name))
             }
         }
-        def desugar = p.configurations.findByName('coreLibraryDesugaring')
-        if (desugar != null) {
-            desugar.allDependencies.each { d -> lines.add("gate-desugaring: ${p.path} ${d.group}:${d.name}".toString()) }
+        def projectPath = p.path
+        task.doLast {
+            if (!configurationName) throw new GradleException('pass -Pgate.configuration=<variant>RuntimeClasspath')
+            lines.each { println it }
+            println "gate-file-dependencies: done ${projectPath}"
         }
-        lines.add("gate-file-dependencies: done ${p.path}".toString())
-        t.doLast { lines.each { println it } }
     }
 }
