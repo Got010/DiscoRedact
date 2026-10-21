@@ -35,7 +35,9 @@
       "permission": null,
       "read_permission": null,
       "write_permission": null,
-      "grant_uri_permissions": false,
+      "grant_uri_permissions": null,
+      "authorities": [],
+      "foreground_service_type": null,
       "actions": [
         "android.intent.action.MAIN"
       ],
@@ -55,6 +57,7 @@
       "authorities": [
         "app.discoredact.androidx-startup"
       ],
+      "foreground_service_type": null,
       "actions": [],
       "categories": [],
       "data": []
@@ -66,7 +69,9 @@
       "permission": "android.permission.DUMP",
       "read_permission": null,
       "write_permission": null,
-      "grant_uri_permissions": false,
+      "grant_uri_permissions": null,
+      "authorities": [],
+      "foreground_service_type": null,
       "actions": [
         "androidx.profileinstaller.action.BENCHMARK_OPERATION",
         "androidx.profileinstaller.action.INSTALL_PROFILE",
@@ -83,7 +88,8 @@
       "permission": null,
       "read_permission": null,
       "write_permission": null,
-      "grant_uri_permissions": false,
+      "grant_uri_permissions": null,
+      "authorities": [],
       "foreground_service_type": null,
       "actions": [],
       "categories": [],
