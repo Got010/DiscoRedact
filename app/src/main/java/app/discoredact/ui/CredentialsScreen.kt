@@ -73,7 +73,7 @@ fun CredentialsScreen(vm: AppViewModel) {
             HorizontalDivider()
             Text("Import from \"Copy as cURL\"", style = MaterialTheme.typography.titleMedium)
             Text(
-                "On a desktop browser logged into the alt: open the developer tools, Network panel, pick any request to discord.com/api, " +
+                "On a desktop browser logged into the alt: open the developer tools, Network panel, pick any request to Discord's API, " +
                     "right-click it, Copy > Copy as cURL, and paste it here. The paste is read once for its headers and not kept.",
                 style = MaterialTheme.typography.bodySmall,
             )
