@@ -28,4 +28,12 @@ class TripwireTest {
         assertTrue(t.record(599_999)) // the fifth, with the first still inside the window
         assertEquals(4, t.count(600_000)) // the first has aged out exactly at ten minutes
     }
+
+    @Test fun seedingReplacesTheWindowSoReseedingAfterABreakCountsNothingTwice() {
+        val t = Tripwire()
+        t.seed(listOf(1L, 2L, 3L, 4L))
+        t.seed(listOf(1L, 2L, 3L, 4L))
+        assertEquals(4, t.count(5L))
+        assertTrue(t.record(6L))
+    }
 }
