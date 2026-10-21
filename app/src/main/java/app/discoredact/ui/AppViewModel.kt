@@ -15,13 +15,19 @@ import app.discoredact.core.pacing.PacingPreset
 import app.discoredact.core.pacing.QuietHours
 import app.discoredact.core.selection.DeletePlan
 import app.discoredact.core.selection.MessageFilter
+import app.discoredact.core.executor.Executor
 import app.discoredact.data.AppSettings
 import app.discoredact.data.ChannelSummary
+import app.discoredact.data.EventEntity
 import app.discoredact.data.FilterPreview
 import app.discoredact.data.FreezeResult
 import app.discoredact.data.ImportState
 import app.discoredact.data.MessageRow
 import app.discoredact.data.Repository
+import app.discoredact.data.RunChannelLine
+import app.discoredact.data.RunProgress
+import app.discoredact.work.RunScheduler
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -47,6 +53,7 @@ sealed interface Route {
     data object Review : Route
     data class Frozen(val runId: Long, val total: Int, val channels: Int) : Route
     data object Settings : Route
+    data object Run : Route
 }
 
 /** Loads a long list a page at a time (no Paging dependency). Pages load off the main thread. */
@@ -143,6 +150,32 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         generation.flatMapLatest { repo.observeContentCount() }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
     val runCount: StateFlow<Int> =
         generation.flatMapLatest { repo.observeRunCount() }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
+    // ---- The current run (M2): an open one first, else the newest frozen one, else the last ended one. ----------
+
+    private val scheduler = RunScheduler(app)
+    private val currentRunId: StateFlow<Long?> =
+        generation.flatMapLatest { repo.observeCurrentRunId() }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    val runProgress: StateFlow<RunProgress?> =
+        currentRunId.flatMapLatest { id -> if (id == null) flowOf(null) else repo.observeProgress(id) }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    val runEvents: StateFlow<List<EventEntity>> =
+        currentRunId.flatMapLatest { id -> if (id == null) flowOf(emptyList()) else repo.observeEvents(id, 200) }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val runNextChannel: StateFlow<String?> =
+        currentRunId.flatMapLatest { id -> if (id == null) flowOf(null) else repo.observeNextChannelName(id) }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    val runChannelLines: StateFlow<List<RunChannelLine>> =
+        currentRunId.flatMapLatest { id -> if (id == null) flowOf(emptyList()) else repo.observeChannelLines(id) }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val workState: StateFlow<RunScheduler.WorkState> =
+        scheduler.observeActive().stateIn(viewModelScope, SharingStarted.Eagerly, RunScheduler.WorkState.NONE)
+    val deletedToday: StateFlow<Int> =
+        generation.flatMapLatest { repo.observeDeletedSince(LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()) }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
+    /** A message for the Run screen. */
+    var runNotice by mutableStateOf<String?>(null)
 
     /** Mirrors the process-wide import (Graph.imports), so a ViewModel made while an import runs shows it. */
     var importState by mutableStateOf(graph.imports.state.value)
@@ -381,6 +414,78 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } finally {
                 wiping = false
             }
+        }
+    }
+
+    // ---- Runs (M2) ----------------------------------------------------------------------------------------------
+
+    fun setOldestFirst(on: Boolean) = graph.settings.update { it.copy(oldestFirst = on) }
+
+    /**
+     * Starts a frozen run as a dry run or a real one, per the Dry run toggle at this moment. The choice is written to
+     * the run once; a later resume keeps it. A real run with no stored credentials pauses at once (milestone 3).
+     */
+    fun startRun(runId: Long) {
+        if (wiping) return
+        val s = settings.value
+        viewModelScope.launch {
+            try {
+                val options = withContext(Dispatchers.IO) { repo.prepareRun(runId, s.dryRun, s.oldestFirst) }
+                scheduler.start(runId, options.dryRun)
+                runNotice = null
+                backStack.removeAt(backStack.lastIndex)
+                backStack.add(Route.Run)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                runNotice = "Could not start: ${e.javaClass.simpleName}${e.message?.let { ": $it" } ?: ""}"
+            }
+        }
+    }
+
+    /** Resumes an interrupted, paused, halted or waiting run with the options it was started with. */
+    fun resumeRun(runId: Long) {
+        if (wiping) return
+        viewModelScope.launch {
+            val options = withContext(Dispatchers.IO) { repo.runOptions(runId) }
+            if (options == null) {
+                runNotice = "This run was never started; start it from its frozen screen."
+                return@launch
+            }
+            val hold = options.resumeNotBefore
+            if (hold != null && hold > System.currentTimeMillis()) {
+                runNotice = "Not before ${formatTime(hold)}."
+                return@launch
+            }
+            scheduler.start(runId, options.dryRun)
+            runNotice = null
+        }
+    }
+
+    /** Pause: the worker is cancelled after the request in flight; the run stays open. */
+    fun pauseRun(runId: Long) = viewModelScope.launch {
+        withContext(Dispatchers.IO) { repo.pauseRun(runId) }
+        scheduler.cancel()
+    }
+
+    /** Stop: the run is ended now and the worker cancelled after the request in flight. */
+    fun stopRun(runId: Long) = viewModelScope.launch {
+        withContext(Dispatchers.IO) { repo.stopRun(runId) }
+        scheduler.cancel()
+    }
+
+    /**
+     * On every return to the foreground: a run that was waiting for quiet hours, the daily cap or the app itself
+     * continues now if its time has come. A foreground service can only start while the app is in front.
+     */
+    fun onAppForeground() {
+        viewModelScope.launch {
+            val p = runProgress.value ?: return@launch
+            if (p.endedAt != null || p.stopReason?.startsWith("waiting:") != true) return@launch
+            val hold = p.resumeNotBefore
+            if (hold != null && hold > System.currentTimeMillis()) return@launch
+            val options = withContext(Dispatchers.IO) { repo.runOptions(p.runId) } ?: return@launch
+            scheduler.start(p.runId, options.dryRun)
         }
     }
 }

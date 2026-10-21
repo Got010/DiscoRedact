@@ -16,6 +16,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -104,16 +105,42 @@ fun ReviewScreen(vm: AppViewModel) {
 
 @Composable
 fun FrozenScreen(vm: AppViewModel, r: Route.Frozen) {
+    val settings by vm.settings.collectAsState()
     Scaffold(topBar = { TopAppBar(title = { Text("Run frozen") }) }) { pad ->
         Column(Modifier.padding(pad).padding(24.dp).fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("Run #${r.runId}: ${r.total} messages in ${r.channels} DMs are frozen into this run.", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "The executor is not built yet (milestone 2). Nothing was sent and nothing will be deleted. " +
-                    "This app has no network code in this version.",
-                color = MaterialTheme.colorScheme.error,
-            )
-            Text("Marking a message Keep now still protects it when the executor exists: it re-checks keep before every delete.", style = MaterialTheme.typography.bodySmall)
-            Button(onClick = { vm.home() }) { Text("Back to channels") }
+            Text("Nothing has been sent yet. Selecting more messages later needs a new review; marking a message Keep protects it even while the run goes.", style = MaterialTheme.typography.bodySmall)
+            HorizontalDivider()
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Dry run", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        if (settings.dryRun) "ON: the run walks every message through the guard and reports what it would delete. No network."
+                        else "OFF: the run deletes for real, one request at a time, paced by the ${settings.pacing.preset.name.lowercase()} preset.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Switch(checked = settings.dryRun, onCheckedChange = { vm.setDryRun(it) })
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Order within a DM", style = MaterialTheme.typography.titleSmall)
+                    Text(if (settings.oldestFirst) "Oldest first" else "Newest first (default)", style = MaterialTheme.typography.bodySmall)
+                }
+                Switch(checked = settings.oldestFirst, onCheckedChange = { vm.setOldestFirst(it) })
+            }
+            if (!settings.dryRun) {
+                Text(
+                    "A real run needs the captured headers of the alt's browser session. This version cannot store them yet " +
+                        "(milestone 3): a real run starts, finds no credentials, sends nothing and pauses.",
+                    color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            vm.runNotice?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            Button(onClick = { vm.startRun(r.runId) }, modifier = Modifier.fillMaxWidth()) {
+                Text(if (settings.dryRun) "Start dry run" else "Start run (deletes for real)")
+            }
+            OutlinedButton(onClick = { vm.home() }, modifier = Modifier.fillMaxWidth()) { Text("Later (back to channels)") }
         }
     }
 }

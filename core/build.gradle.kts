@@ -1,9 +1,11 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
-// Plain Kotlin JVM module: the package parser, the selection rules, the pacing presets and the model.
-// No Android, no network (CLAUDE.md rules 1-4 and 18).
+// Plain Kotlin JVM module: the package parser, the selection rules, the pacing presets, the model, the response
+// classifier and the executor. No Android, no network API (CLAUDE.md rules 1-4 and 18): the transport is an
+// interface that :net implements with OkHttp.
 plugins {
     alias(libs.plugins.kotlin.jvm)
+    `java-test-fixtures` // the executor's fakes, shared with :net's mock-server suite
 }
 
 java {
@@ -19,7 +21,9 @@ kotlin {
 
 dependencies {
     api(libs.kotlinx.serialization.json)
+    api(libs.kotlinx.coroutines.core)
     testImplementation(libs.junit)
+    testImplementation(testFixtures(project(":core")))
 }
 
 tasks.test {

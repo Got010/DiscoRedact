@@ -2,9 +2,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- The only permission. Milestone 1 has no network code; the executor (M2) needs it for its one endpoint on
-         discord.com (CLAUDE.md rules 1 and 2). Declared now so the first gate baseline records it once. -->
+    <!-- The network permission: one endpoint on discord.com (CLAUDE.md rules 1 and 2). -->
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- The run worker is a dataSync foreground service (spec section 3) with a progress notification.
+         WorkManager's own manifest adds WAKE_LOCK, RECEIVE_BOOT_COMPLETED and ACCESS_NETWORK_STATE for its
+         scheduling; they are listed in the gate baseline. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- androidx.core adds a signature permission for ContextCompat.registerReceiver on Android 12 and lower.
          minSdk is 35 and the app registers no receivers, so it is removed: INTERNET stays the only permission. -->
@@ -32,5 +38,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- WorkManager's foreground service, given the dataSync type it runs the executor under. -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
     </application>
 </manifest>

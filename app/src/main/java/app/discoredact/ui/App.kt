@@ -23,6 +23,7 @@ fun DiscoRedactApp(vm: AppViewModel = viewModel()) {
             Route.Review -> ReviewScreen(vm)
             is Route.Frozen -> FrozenScreen(vm, r)
             Route.Settings -> SettingsScreen(vm)
+            Route.Run -> RunScreen(vm)
         }
     }
 }
