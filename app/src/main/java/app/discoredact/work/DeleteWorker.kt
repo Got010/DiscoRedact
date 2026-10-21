@@ -50,7 +50,10 @@ class DeleteWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         val config = graph.settings.settings.value.pacing.toConfig()
         val store = graph.runStore
         val transport = if (options.dryRun) DryRunTransport else graph.transport
-        val executor = Executor(store, transport, graph.credentials, config, SystemClock(), Sleeper { ms -> delay(ms) }, Random.Default)
+        val executor = Executor(
+            store, transport, graph.credentials, config, SystemClock(), Sleeper { ms -> delay(ms) }, Random.Default,
+            sendMutex = graph.sendMutex,
+        )
         while (true) {
             val end = withContext(Dispatchers.IO) { executor.runSession(runId, options.dryRun, options.oldestFirst) }
             when (end) {

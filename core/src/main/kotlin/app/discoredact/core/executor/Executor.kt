@@ -7,6 +7,8 @@ import app.discoredact.core.pacing.PacingConfig
 import app.discoredact.core.selection.FrozenSet
 import app.discoredact.core.selection.deleteGuard
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -78,6 +80,11 @@ class Executor(
     private val sleeper: Sleeper,
     private val random: Random = Random.Default,
     private val tripwire: Tripwire = Tripwire(),
+    /**
+     * Held around the guard re-read, the send and the row write. The app passes one process-wide mutex, so a worker
+     * being cancelled and its replacement (Pause, then Resume) can never both pass the guard for the same message.
+     */
+    private val sendMutex: Mutex = Mutex(),
 ) {
     /** Backoff after consecutive transient failures; a further failure pauses the run. */
     val transientBackoffMs: LongArray = longArrayOf(30_000, 120_000, 600_000)
@@ -126,22 +133,19 @@ class Executor(
                 return SessionEnd.Done
             }
 
-            // The delete guard, immediately before the request (CLAUDE.md rule 5).
-            val row = store.guardRow(candidate.messageId)
-            if (row == null || !deleteGuard(row, frozen)) {
-                if (++consecutiveGuardSkips > MAX_GUARD_SKIPS) {
-                    store.runPaused(runId, STOP_PAUSED_GUARD, null)
-                    log(runId, "PAUSE guard")
-                    return SessionEnd.PausedTransient
-                }
-                if (dryRun) store.dryVerdict(runId, candidate.messageId, if (row?.keep == true) DryVerdict.SKIPPED_KEPT else DryVerdict.SKIPPED_NOT_PENDING)
-                else log(runId, "GUARD_SKIP")
-                continue
-            }
-            consecutiveGuardSkips = 0
-
             if (dryRun) {
-                // Same order, same guard, no socket: the guard passed, so a real run would send this one.
+                // Same order, same guard, no socket: a verdict for every message the guard passes.
+                val row = store.guardRow(candidate.messageId)
+                if (row == null || !deleteGuard(row, frozen)) {
+                    if (++consecutiveGuardSkips > MAX_GUARD_SKIPS) {
+                        store.runPaused(runId, STOP_PAUSED_GUARD, null)
+                        log(runId, "PAUSE guard")
+                        return SessionEnd.PausedTransient
+                    }
+                    store.dryVerdict(runId, candidate.messageId, if (row?.keep == true) DryVerdict.SKIPPED_KEPT else DryVerdict.SKIPPED_NOT_PENDING)
+                    continue
+                }
+                consecutiveGuardSkips = 0
                 store.dryVerdict(runId, candidate.messageId, DryVerdict.WOULD_DELETE)
                 log(runId, "DRY_WOULD_DELETE")
                 continue
@@ -176,32 +180,49 @@ class Executor(
                 return SessionEnd.NoCredentials
             }
 
-            // Send and record as one unit: a Pause cancels only between messages, never between a response and its row.
-            val result: StepResult = withContext(NonCancellable) {
-                val response = try {
-                    transport.send(DeleteRequest(candidate.channelId, candidate.messageId), headers)
-                } catch (_: TransportException) {
-                    null
-                }
-                val at = clock.nowMs()
-                if (response == null) {
-                    store.messageOutcome(candidate.messageId, MessageStatus.PENDING, null, null, at)
-                    store.event(EventRecord(at, runId, null, null, null, null, null, "NO_RESPONSE"))
-                    StepResult(Outcome.Transient(null), null, 0L)
-                } else {
-                    val outcome = ResponseClassifier.classify(response)
-                    val info = RateLimitInfo.from(response)
-                    val code = ResponseClassifier.discordCode(response)
-                    val action = record(runId, candidate, response.status, code, outcome, at)
-                    store.event(EventRecord(at, runId, response.status, code, info.bucket, info.remaining, info.resetAfterSeconds, action))
-                    val resetWait = if (info.remaining != null && info.remaining <= 1 && info.resetAfterSeconds != null) {
-                        Pacing.rateLimitWaitMs(config, info.resetAfterSeconds, random)
-                    } else {
-                        0L
+            // The delete guard immediately before the request (CLAUDE.md rule 5), then the send and its row, as one
+            // unit under the process-wide lock: a Pause cancels only between messages, never between a response
+            // and its row, and a replacement worker can only re-read the row after this one has written it.
+            val result: StepResult? = sendMutex.withLock {
+                withContext(NonCancellable) {
+                    val row = store.guardRow(candidate.messageId)
+                    if (row == null || !deleteGuard(row, frozen)) return@withContext null
+                    val response = try {
+                        transport.send(DeleteRequest(candidate.channelId, candidate.messageId), headers)
+                    } catch (_: TransportException) {
+                        null
                     }
-                    StepResult(outcome, info, resetWait)
+                    val at = clock.nowMs()
+                    if (response == null) {
+                        store.messageOutcome(candidate.messageId, MessageStatus.PENDING, null, null, at)
+                        store.event(EventRecord(at, runId, null, null, null, null, null, "NO_RESPONSE"))
+                        StepResult(Outcome.Transient(null), null, 0L)
+                    } else {
+                        val outcome = ResponseClassifier.classify(response)
+                        val info = RateLimitInfo.from(response)
+                        val code = ResponseClassifier.discordCode(response)
+                        val action = record(runId, candidate, response.status, code, outcome, at)
+                        store.event(EventRecord(at, runId, response.status, code, info.bucket, info.remaining, info.resetAfterSeconds, action))
+                        val resetWait = if (info.remaining != null && info.remaining <= 1 && info.resetAfterSeconds != null) {
+                            Pacing.rateLimitWaitMs(config, info.resetAfterSeconds, random)
+                        } else {
+                            0L
+                        }
+                        StepResult(outcome, info, resetWait)
+                    }
                 }
             }
+            if (result == null) {
+                // Kept, or no longer pending, since the candidate query: skipped silently, never sent.
+                if (++consecutiveGuardSkips > MAX_GUARD_SKIPS) {
+                    store.runPaused(runId, STOP_PAUSED_GUARD, null)
+                    log(runId, "PAUSE guard")
+                    return SessionEnd.PausedTransient
+                }
+                log(runId, "GUARD_SKIP")
+                continue
+            }
+            consecutiveGuardSkips = 0
 
             when (val o = result.outcome) {
                 Outcome.Deleted, Outcome.AlreadyGone, Outcome.SystemMessage -> {
