@@ -10,9 +10,6 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.discoredact.Graph
-import app.discoredact.core.importer.ImportProgress
-import app.discoredact.core.importer.ImportReport
-import app.discoredact.core.importer.StopSignal
 import app.discoredact.core.model.DmMode
 import app.discoredact.core.pacing.PacingPreset
 import app.discoredact.core.pacing.QuietHours
@@ -22,11 +19,11 @@ import app.discoredact.data.AppSettings
 import app.discoredact.data.ChannelSummary
 import app.discoredact.data.FilterPreview
 import app.discoredact.data.FreezeResult
+import app.discoredact.data.ImportState
 import app.discoredact.data.MessageRow
 import app.discoredact.data.Repository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -50,13 +47,6 @@ sealed interface Route {
     data object Review : Route
     data class Frozen(val runId: Long, val total: Int, val channels: Int) : Route
     data object Settings : Route
-}
-
-sealed interface ImportState {
-    data object Idle : ImportState
-    data class Running(val progress: ImportProgress?) : ImportState
-    data class Done(val report: ImportReport) : ImportState
-    data class Failed(val message: String) : ImportState
 }
 
 /** Loads a long list a page at a time (no Paging dependency). Pages load off the main thread. */
@@ -154,7 +144,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val runCount: StateFlow<Int> =
         generation.flatMapLatest { repo.observeRunCount() }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
 
-    var importState by mutableStateOf<ImportState>(ImportState.Idle)
+    /** Mirrors the process-wide import (Graph.imports), so a ViewModel made while an import runs shows it. */
+    var importState by mutableStateOf(graph.imports.state.value)
         private set
     var browser by mutableStateOf<BrowserState?>(null)
         private set
@@ -162,10 +153,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
     val review = ReviewState()
     private var previewJob: Job? = null
-    private var importJob: Job? = null
-
-    /** Only Wipe everything stops an import; leaving the app or clearing this ViewModel does not. */
-    private val importStop = StopSignal()
     private var filterJob: Job? = null
     private var freezeJob: Job? = null
 
@@ -205,36 +192,32 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- Import -------------------------------------------------------------------------------------------------
 
-    fun import(uri: Uri) {
-        if (importState is ImportState.Running || wiping) return
-        importState = ImportState.Running(null)
-        importStop.clear()
-        graph.settings.setImportUnfinished(true)
-        val resolver = getApplication<Application>().contentResolver
-        importJob = viewModelScope.launch {
-            importState = try {
-                val report = withContext(Dispatchers.IO) {
-                    // Blocking and not tied to this scope's cancellation: it runs to the end unless Wipe stops it.
-                    repo.import(
-                        source = { resolver.openInputStream(uri) ?: throw IOException("the file could not be opened") },
-                        checkCancelled = importStop::checkpoint,
-                    ) { p ->
-                        viewModelScope.launch(Dispatchers.Main) { if (importState is ImportState.Running) importState = ImportState.Running(p) }
-                    }.also { graph.settings.setImportUnfinished(false) }
-                }
-                ImportState.Done(report)
-            } catch (e: CancellationException) {
-                importState = ImportState.Idle
-                throw e
-            } catch (e: Exception) {
-                ImportState.Failed(e.javaClass.simpleName + (e.message?.let { ": $it" } ?: ""))
-            }
-        }
+    init {
+        viewModelScope.launch { graph.imports.state.collect { importState = it } }
     }
 
-    fun resetImport() {
-        if (importState !is ImportState.Running) importState = ImportState.Idle
+    /**
+     * Starts an import in the process-wide runner (Graph.imports). It runs to the end even if this screen or
+     * ViewModel goes away; only Wipe everything stops it. A second import is refused while one runs.
+     */
+    fun import(uri: Uri) {
+        if (wiping || graph.imports.isRunning) return
+        val resolver = getApplication<Application>().contentResolver
+        val repository = repo
+        graph.settings.setImportUnfinished(true)
+        graph.imports.start(
+            work = { checkpoint, progress ->
+                repository.import(
+                    source = { resolver.openInputStream(uri) ?: throw IOException("the file could not be opened") },
+                    checkCancelled = checkpoint,
+                    progressCallback = progress,
+                )
+            },
+            onCompleted = { graph.settings.setImportUnfinished(false) },
+        )
     }
+
+    fun resetImport() = graph.imports.reset()
 
     // ---- Channels and browser -----------------------------------------------------------------------------------
 
@@ -381,13 +364,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 previewJob?.cancel()
-                importStop.request()
-                importJob?.cancelAndJoin()
+                graph.imports.stopAndJoin()
                 filterJob?.join()
                 freezeJob?.join()
                 withContext(Dispatchers.IO) { graph.wipeEverything() }
                 generation.value += 1
-                importState = ImportState.Idle
+                graph.imports.reset()
                 browser = null
                 filters = null
                 settingsNotice = null
@@ -397,7 +379,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 settingsNotice = "Wipe failed: ${e.javaClass.simpleName}${e.message?.let { ": $it" } ?: ""}. Try again, or uninstall the app to remove its data."
             } finally {
-                importStop.clear()
                 wiping = false
             }
         }

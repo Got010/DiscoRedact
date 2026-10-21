@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import app.discoredact.core.model.ChannelType
 import app.discoredact.core.model.DmMode
 import app.discoredact.data.ChannelSummary
+import app.discoredact.data.ImportState
 
 fun modeLabel(mode: DmMode) = when (mode) {
     DmMode.DELETE_SELECTED -> "Delete selected"
