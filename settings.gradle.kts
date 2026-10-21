@@ -27,4 +27,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "DiscoRedact"
-include(":core", ":app")
+include(":core", ":net", ":app")

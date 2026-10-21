@@ -47,3 +47,61 @@ data class MessageRow(
 ) {
     fun toSel() = MessageSel(messageId, channelId, timestamp, content, hasAttachments, selected, keep, status, manual)
 }
+
+/** The next pending message of a run, in run order (the executor's candidate). */
+data class CandidateRow(
+    @ColumnInfo(name = "message_id") val messageId: Long,
+    @ColumnInfo(name = "channel_id") val channelId: Long,
+    @ColumnInfo(name = "position") val position: Int,
+)
+
+/** The message row as the delete guard re-reads it. */
+data class GuardRowView(
+    @ColumnInfo(name = "message_id") val messageId: Long,
+    @ColumnInfo(name = "status") val status: MessageStatus,
+    @ColumnInfo(name = "keep") val keep: Boolean,
+)
+
+data class RunSnapshotRow(
+    @ColumnInfo(name = "run_id") val runId: Long,
+    @ColumnInfo(name = "started_at") val startedAt: Long?,
+    @ColumnInfo(name = "ended_at") val endedAt: Long?,
+    @ColumnInfo(name = "stop_reason") val stopReason: String?,
+)
+
+/** Everything the Run screen shows about one run, live. */
+data class RunProgress(
+    @ColumnInfo(name = "run_id") val runId: Long,
+    @ColumnInfo(name = "started_at") val startedAt: Long?,
+    @ColumnInfo(name = "ended_at") val endedAt: Long?,
+    @ColumnInfo(name = "deleted_count") val deletedCount: Int,
+    @ColumnInfo(name = "stop_reason") val stopReason: String?,
+    @ColumnInfo(name = "dry_run") val dryRun: Boolean?,
+    @ColumnInfo(name = "oldest_first") val oldestFirst: Boolean?,
+    @ColumnInfo(name = "resume_not_before") val resumeNotBefore: Long?,
+    @ColumnInfo(name = "total") val total: Int,
+    @ColumnInfo(name = "deleted") val deleted: Int,
+    @ColumnInfo(name = "already_gone") val alreadyGone: Int,
+    @ColumnInfo(name = "skipped_system") val skippedSystem: Int,
+    @ColumnInfo(name = "failed") val failed: Int,
+    /** Still pending and reachable: what a session would send next. */
+    @ColumnInfo(name = "pending") val pending: Int,
+    /** Pending but kept, or in a channel that is gone or inaccessible: never sent. */
+    @ColumnInfo(name = "blocked") val blocked: Int,
+    @ColumnInfo(name = "dry_would_delete") val dryWouldDelete: Int,
+    @ColumnInfo(name = "channels") val channels: Int,
+) {
+    val isDryRun: Boolean get() = dryRun == true
+    val settled: Int get() = deleted + alreadyGone + skippedSystem + failed
+}
+
+/** A per-channel line of a run's report. */
+data class RunChannelLine(
+    @ColumnInfo(name = "channel_id") val channelId: Long,
+    @ColumnInfo(name = "display_name") val displayName: String,
+    @ColumnInfo(name = "state") val state: ChannelState,
+    @ColumnInfo(name = "total") val total: Int,
+    @ColumnInfo(name = "deleted") val deleted: Int,
+    @ColumnInfo(name = "pending") val pending: Int,
+    @ColumnInfo(name = "dry_would_delete") val dryWouldDelete: Int,
+)

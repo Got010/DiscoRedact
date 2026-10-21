@@ -8,6 +8,7 @@ import app.discoredact.core.importer.ImportedChannel
 import app.discoredact.core.importer.ImportedMessage
 import app.discoredact.core.importer.PackageImporter
 import app.discoredact.core.importer.ZipSource
+import app.discoredact.core.executor.Executor
 import app.discoredact.core.model.ChannelState
 import app.discoredact.core.model.DmMode
 import app.discoredact.core.model.MessageStatus
@@ -244,6 +245,43 @@ class Repository(private val db: AppDatabase, private val clock: () -> Long = Sy
         val byId = messages.rowsByIds(ids).associateBy { it.messageId }
         return ids.mapNotNull { byId[it] }
     }
+
+    // ---- Runs (M2) ----------------------------------------------------------------------------------------------
+
+    fun observeCurrentRunId() = runs.observeCurrentRunId()
+    fun observeProgress(runId: Long) = runs.observeProgress(runId)
+    fun observeEvents(runId: Long, limit: Int) = runs.observeEvents(runId, limit)
+    fun observeNextChannelName(runId: Long) = runs.observeNextChannelName(runId)
+    fun observeChannelLines(runId: Long) = runs.observeChannelLines(runId)
+    fun observeDeletedSince(sinceMs: Long) = runs.observeDeletedSince(sinceMs)
+
+    fun runOptions(runId: Long): RunOptionsEntity? = runs.options(runId)
+    fun observeOpenRunId() = runs.observeOpenRunId()
+    suspend fun openRunId(): Long? = runs.openRunId()
+    suspend fun currentRunId(): Long? = runs.currentRunId()
+    fun runSnapshot(runId: Long): RunSnapshotRow? = runs.snapshot(runId)
+
+    /** Records how a frozen run is to be executed, once: the first start writes it, a resume keeps it. */
+    suspend fun prepareRun(runId: Long, dryRun: Boolean, oldestFirst: Boolean): RunOptionsEntity = db.withTransaction {
+        runs.options(runId) ?: RunOptionsEntity(runId, dryRun, oldestFirst, null, clock()).also { runs.insertOptions(it) }
+    }
+
+    /** The user's Stop: the run ends now; the caller cancels the worker. */
+    suspend fun stopRun(runId: Long) = runs.runEnded(runId, clock(), Executor.STOP_STOPPED)
+
+    /** The user's Pause: the caller cancels the worker; the run stays open with this reason. */
+    suspend fun pauseRun(runId: Long) = runs.runStopReason(runId, Executor.STOP_PAUSED_USER)
+
+    /** The worker ended for quiet hours or the daily cap; the next session is enqueued for [untilMs]. */
+    fun markWaiting(runId: Long, reason: String, untilMs: Long) = db.runInTransaction(
+        Runnable {
+            runs.runStopReason(runId, reason)
+            runs.resumeNotBefore(runId, untilMs)
+        },
+    )
+
+    /** A delayed worker fired while the app was closed and could not start its foreground service. */
+    fun markWaitingForApp(runId: Long) = runs.runStopReason(runId, Executor.STOP_WAITING_APP)
 
     /**
      * Freezes the reviewed delete set into a new run. The set is recomputed inside the transaction; if it differs
