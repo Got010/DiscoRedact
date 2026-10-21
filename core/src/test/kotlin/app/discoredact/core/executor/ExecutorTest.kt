@@ -6,6 +6,7 @@ import app.discoredact.core.pacing.PacingConfig
 import app.discoredact.core.pacing.PacingPreset
 import app.discoredact.core.pacing.QuietHours
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -386,5 +387,42 @@ class ExecutorTest {
         assertFalse(text.contains(TEST_HEADERS.userAgent))
         assertFalse(text.contains(TEST_HEADERS.superProperties))
         assertFalse(TEST_HEADERS.toString().contains("TOKEN-SENTINEL"))
+    }
+
+    @Test fun keepToggledDuringTheWaitBeforeARequestBlocksIt() {
+        twoChannels()
+        // The user stars 102 while the executor is waiting out the delay before sending it.
+        val starring = object : Sleeper {
+            override suspend fun sleep(ms: Long) {
+                sleeper.sleep(ms)
+                if (transport.requests.size == 1) store.messages[102]!!.keep = true
+            }
+        }
+        val e = Executor(store, transport, creds, config, clock, starring, Random(3))
+        assertEquals(SessionEnd.Done, run(e))
+        assertEquals(listOf(101L, 103L, 201L, 202L), transport.requests.map { it.messageId })
+        assertEquals(MessageStatus.PENDING, store.messages[102]!!.status)
+        assertTrue(store.actions().contains("GUARD_SKIP"))
+    }
+
+    @Test fun twoExecutorsOnOneLockNeverBothSendTheSameMessage() {
+        twoChannels()
+        val lock = kotlinx.coroutines.sync.Mutex()
+        val slow = object : Transport {
+            override fun send(request: DeleteRequest, headers: HeaderSet): ApiResponse {
+                Thread.sleep(30)
+                return transport.send(request, headers)
+            }
+        }
+        val a = Executor(store, slow, creds, config.copy(baseDelayMs = 0, jitterMaxMs = 0, channelSwitchMinMs = 0, channelSwitchMaxMs = 0), clock, Sleeper {}, Random(1), sendMutex = lock)
+        val b = Executor(store, slow, creds, config.copy(baseDelayMs = 0, jitterMaxMs = 0, channelSwitchMinMs = 0, channelSwitchMaxMs = 0), clock, Sleeper {}, Random(2), sendMutex = lock)
+        runBlocking {
+            val ja = this.launch(kotlinx.coroutines.Dispatchers.Default) { a.runSession(1, false, false) }
+            val jb = this.launch(kotlinx.coroutines.Dispatchers.Default) { b.runSession(1, false, false) }
+            ja.join(); jb.join()
+        }
+        assertEquals(5, transport.requests.size)
+        assertEquals(5, transport.requests.map { it.messageId }.toSet().size)
+        assertTrue(store.statuses().values.all { it == MessageStatus.DELETED })
     }
 }
