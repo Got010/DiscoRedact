@@ -200,7 +200,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Parses a "Copy as cURL" text (or a pasted headers panel) and stores the five headers. The text is not kept. */
     fun importCurl(text: String) = storeHeaders {
         val parsed = CurlParser.parse(text)
-        if (!parsed.complete) return@storeHeaders null to "Not found in the paste: ${parsed.missing.joinToString(", ")}. Copy a request to discord.com/api as cURL from the browser's Network panel, or fill the fields by hand."
+        if (!parsed.complete) return@storeHeaders null to "Not found in the paste: ${parsed.missing.joinToString(", ")}. Copy a request to Discord's API as cURL from the browser's Network panel, or fill the fields by hand."
         parsed.toHeaderSet(System.currentTimeMillis())?.let { it to null }
             ?: (null to "A value is not usable (every field must be present and plain ASCII). Nothing was stored.")
     }
