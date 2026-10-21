@@ -200,6 +200,8 @@ class PackageImporter(private val limits: ImportLimits = ImportLimits()) {
             json.decodeToSequence<JsonElement>(withoutBom(NonClosing(zip)), DecodeSequenceMode.ARRAY_WRAPPED).iterator()
         } catch (_: IllegalArgumentException) {
             return FileResult(false, bad) // SerializationException is an IllegalArgumentException
+        } catch (_: StackOverflowError) {
+            return FileResult(false, bad) // absurdly deep nesting: the decoder recurses per level
         }
         while (true) {
             val el = try {
@@ -207,6 +209,8 @@ class PackageImporter(private val limits: ImportLimits = ImportLimits()) {
                 iterator.next()
             } catch (_: IllegalArgumentException) {
                 return FileResult(false, bad) // bad JSON: rows read so far stay, the rest of this file is skipped
+            } catch (_: StackOverflowError) {
+                return FileResult(false, bad) // absurdly deep nesting: the decoder recurses per level
             }
             val obj = el as? JsonObject
             if (obj == null) {
@@ -321,9 +325,11 @@ class PackageImporter(private val limits: ImportLimits = ImportLimits()) {
             return null
         }
         return try {
-            json.parseToJsonElement(String(bytes, Charsets.UTF_8).removePrefix("﻿"))
+            json.parseToJsonElement(String(bytes, Charsets.UTF_8).removePrefix("\uFEFF"))
         } catch (_: Exception) {
             null
+        } catch (_: StackOverflowError) {
+            null // absurdly deep nesting
         }
     }
 

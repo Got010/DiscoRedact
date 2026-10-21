@@ -14,6 +14,8 @@ data class AppSettings(
     /** Dry run defaults ON until one dry run has completed (CLAUDE.md rule 10). */
     val dryRun: Boolean = true,
     val dryRunCompleted: Boolean = false,
+    /** Set when an import starts, cleared when it completes; still set means the last import did not finish. */
+    val importUnfinished: Boolean = false,
 )
 
 /** Settings in a private SharedPreferences file (excluded from backup and device transfer like everything else). */
@@ -37,7 +39,13 @@ class SettingsStore(context: Context) {
             ),
             dryRun = if (prefs.contains(K_DRY)) prefs.getBoolean(K_DRY, true) else !completed,
             dryRunCompleted = completed,
+            importUnfinished = prefs.getBoolean(K_IMPORT_UNFINISHED, false),
         )
+    }
+
+    fun setImportUnfinished(unfinished: Boolean) {
+        prefs.edit().putBoolean(K_IMPORT_UNFINISHED, unfinished).commit()
+        state.value = read()
     }
 
     fun update(change: (AppSettings) -> AppSettings) {
@@ -66,5 +74,6 @@ class SettingsStore(context: Context) {
         const val K_QUIET_END = "quiet_end_minute"
         const val K_DRY = "dry_run"
         const val K_DRY_DONE = "dry_run_completed"
+        const val K_IMPORT_UNFINISHED = "import_unfinished"
     }
 }

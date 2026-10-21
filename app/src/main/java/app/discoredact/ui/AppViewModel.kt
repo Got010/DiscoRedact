@@ -12,6 +12,7 @@ import androidx.lifecycle.viewModelScope
 import app.discoredact.Graph
 import app.discoredact.core.importer.ImportProgress
 import app.discoredact.core.importer.ImportReport
+import app.discoredact.core.importer.StopSignal
 import app.discoredact.core.model.DmMode
 import app.discoredact.core.pacing.PacingPreset
 import app.discoredact.core.pacing.QuietHours
@@ -26,7 +27,6 @@ import app.discoredact.data.Repository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -163,6 +163,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val review = ReviewState()
     private var previewJob: Job? = null
     private var importJob: Job? = null
+
+    /** Only Wipe everything stops an import; leaving the app or clearing this ViewModel does not. */
+    private val importStop = StopSignal()
     private var filterJob: Job? = null
     private var freezeJob: Job? = null
 
@@ -205,17 +208,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun import(uri: Uri) {
         if (importState is ImportState.Running || wiping) return
         importState = ImportState.Running(null)
+        importStop.clear()
+        graph.settings.setImportUnfinished(true)
         val resolver = getApplication<Application>().contentResolver
         importJob = viewModelScope.launch {
             importState = try {
                 val report = withContext(Dispatchers.IO) {
-                    val job = coroutineContext[Job]
+                    // Blocking and not tied to this scope's cancellation: it runs to the end unless Wipe stops it.
                     repo.import(
                         source = { resolver.openInputStream(uri) ?: throw IOException("the file could not be opened") },
-                        checkCancelled = { job?.ensureActive() },
+                        checkCancelled = importStop::checkpoint,
                     ) { p ->
                         viewModelScope.launch(Dispatchers.Main) { if (importState is ImportState.Running) importState = ImportState.Running(p) }
-                    }
+                    }.also { graph.settings.setImportUnfinished(false) }
                 }
                 ImportState.Done(report)
             } catch (e: CancellationException) {
@@ -376,6 +381,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 previewJob?.cancel()
+                importStop.request()
                 importJob?.cancelAndJoin()
                 filterJob?.join()
                 freezeJob?.join()
@@ -391,6 +397,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 settingsNotice = "Wipe failed: ${e.javaClass.simpleName}${e.message?.let { ": $it" } ?: ""}. Try again, or uninstall the app to remove its data."
             } finally {
+                importStop.clear()
                 wiping = false
             }
         }

@@ -355,4 +355,62 @@ class PackageImporterTest {
         assertEquals(PackageEntry.Ignored, PackagePaths.classify("servers/messages/channel.json"))
         assertEquals(PackageEntry.Ignored, PackagePaths.classify("messages/c1/user.json"))
     }
+
+    @Test
+    fun deeplyNestedJsonIsAMalformedFileNotACrash() {
+        val nested = "[".repeat(50_000) + "]".repeat(50_000)
+        val pkg = zip(
+            "messages/c900000000000000001/channel.json" to dm("900000000000000001"),
+            "messages/c900000000000000001/messages.json" to "[" + jsonMessage("800000000000009001", ts, "before") + "," + nested + "]",
+            "messages/c900000000000000002/channel.json" to nested,
+        )
+        val (report, sink) = run(pkg)
+        assertEquals(listOf(800000000000009001L), sink.messages.map { it.messageId })
+        assertEquals(2, report.malformedFiles)
+        assertEquals(listOf(900000000000000001L), sink.channels.map { it.channelId })
+    }
+
+    /** A sink that calls the stop checkpoint before each write, as the app's Room sink does. */
+    private class CheckpointSink(val signal: StopSignal, val afterFirst: () -> Unit = {}) : ImportSink {
+        var written = 0
+        override fun onChannels(channels: List<ImportedChannel>) = Unit
+        override fun onMessages(batch: List<ImportedMessage>): Int {
+            signal.checkpoint()
+            written += batch.size
+            if (written == batch.size) afterFirst()
+            return batch.size
+        }
+    }
+
+    private fun threeRowPackage() = zip(
+        "messages/c910000000000000001/channel.json" to dm("910000000000000001"),
+        "messages/c910000000000000001/messages.json" to "[" + (1..3).joinToString(",") { jsonMessage("80000000000001000$it", ts, "m$it") } + "]",
+    )
+
+    @Test
+    fun anInterruptIsNotAStopRequestSoTheImportRunsToTheEnd() {
+        val signal = StopSignal()
+        val sink = CheckpointSink(signal) { Thread.currentThread().interrupt() }
+        try {
+            val report = PackageImporter(ImportLimits(batchSize = 1)).import(source(threeRowPackage()), sink)
+            assertEquals(3L, report.messagesInserted)
+            assertEquals(3, sink.written)
+        } finally {
+            Thread.interrupted() // clear the flag for the other tests
+        }
+    }
+
+    @Test
+    fun anExplicitStopRequestStopsAtTheNextBatchAndIsNotAMalformedFile() {
+        val signal = StopSignal()
+        val sink = CheckpointSink(signal) { signal.request() }
+        try {
+            PackageImporter(ImportLimits(batchSize = 1)).import(source(threeRowPackage()), sink)
+            throw AssertionError("the import should have stopped")
+        } catch (_: ImportStoppedException) {
+        }
+        assertEquals(1, sink.written)
+        signal.clear()
+        signal.checkpoint() // cleared: passes
+    }
 }

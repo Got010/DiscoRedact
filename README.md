@@ -30,7 +30,8 @@ Room tables `channels`, `messages`, `runs` and `events` are the spec's section 5
 confirmed), `selection_overrides` (manual toggles, which filters never override) and `channel_inclusion` (the channel
 list's include/exclude). A frozen run has `started_at` null until the executor starts it. Freezing a new run closes
 every run that never started (`ended_at` set, `stop_reason` `superseded`), so the newest unstarted run is the only
-runnable one; the executor (M2) relies on this (`RunRules` in `:core`).
+runnable one; the executor (M2) relies on this (`RunRules` in `:core`). A run that was started but never ended (interrupted) is
+neither superseded nor "runnable"; M2 decides whether resuming it comes before a newer frozen run.
 
 Builds run in CI (`.github/workflows/build.yml`). Dependencies are pinned by SHA-256 in
 `gradle/verification-metadata.xml` and enforced with `--dependency-verification=strict`; local builds on macOS or

@@ -47,8 +47,9 @@ class Repository(private val db: AppDatabase, private val clock: () -> Long = Sy
 
     /**
      * Streams the package into Room in batches. Re-importing adds new messages only; selections are kept.
-     * [checkCancelled] runs before every batch write and throws to stop the import (the caller's coroutine was
-     * cancelled, e.g. by Wipe everything); rows already written stay, as after any interrupted import.
+     * [checkCancelled] runs before every batch write and throws to stop the import; the app passes a StopSignal that
+     * only Wipe everything trips. Rows already written stay, as after any interrupted import, and the message counts
+     * are recounted in every case.
      */
     fun import(source: ZipSource, checkCancelled: () -> Unit = {}, progressCallback: (ImportProgress) -> Unit): ImportReport {
         val sink = object : ImportSink {
@@ -89,9 +90,20 @@ class Repository(private val db: AppDatabase, private val clock: () -> Long = Sy
 
             override fun onProgress(progress: ImportProgress) = progressCallback(progress)
         }
-        val report = PackageImporter().import(source, sink)
-        db.runInTransaction(Runnable { channels.recountMessages() })
-        return report
+        var failure: Throwable? = null
+        return try {
+            PackageImporter().import(source, sink)
+        } catch (t: Throwable) {
+            failure = t
+            throw t
+        } finally {
+            // Counts match the rows actually written, whether the import finished, failed or was stopped.
+            try {
+                db.runInTransaction(Runnable { channels.recountMessages() })
+            } catch (e: Exception) {
+                failure?.addSuppressed(e) ?: throw e
+            }
+        }
     }
 
     // ---- Channels and browser -----------------------------------------------------------------------------------
