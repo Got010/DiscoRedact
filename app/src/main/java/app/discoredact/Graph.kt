@@ -1,11 +1,18 @@
 package app.discoredact
 
 import android.content.Context
+import app.discoredact.core.executor.CredentialStore
+import app.discoredact.core.executor.EmptyCredentialStore
+import app.discoredact.core.executor.RunStore
+import app.discoredact.core.executor.Transport
 import app.discoredact.data.AppDatabase
 import app.discoredact.data.ImportRunner
+import app.discoredact.data.RoomRunStore
+import app.discoredact.net.DiscordTransport
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.sync.Mutex
 import app.discoredact.data.Repository
 import app.discoredact.data.SettingsStore
 
@@ -24,6 +31,22 @@ class Graph private constructor(private val context: Context) {
             db = opened
             Repository(opened).also { repo = it }
         }
+
+    /** The executor's store, on the same database as [repository]. */
+    val runStore: RunStore
+        get() = synchronized(this) {
+            repository
+            RoomRunStore(db!!)
+        }
+
+    /** The one network client of the app (M2). Built on first use; a dry run never touches it. */
+    val transport: Transport by lazy { DiscordTransport.production() }
+
+    /** No header set can be stored until M3: a real run refuses to start (the executor returns NoCredentials). */
+    val credentials: CredentialStore = EmptyCredentialStore
+
+    /** One lock for every executor in this process: the guard re-read, the send and its row never interleave. */
+    val sendMutex = Mutex()
 
     /** Deletes the database (every channel, message, selection and run) and every setting. */
     @Synchronized

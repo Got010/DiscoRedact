@@ -123,3 +123,50 @@ data class ChannelInclusionEntity(
     @PrimaryKey @ColumnInfo(name = "channel_id") val channelId: Long,
     @ColumnInfo(name = "included") val included: Boolean,
 )
+
+/*
+ * Milestone 2 (schema 2) adds three side tables; section 5's tables are unchanged:
+ *   run_options   per-run choices and state the executor needs (dry run, order, a hold before resuming)
+ *   run_results   a dry run's verdicts, one row per message the guard passed (the would-delete report)
+ *   delete_log    every real deletion, permanently: the daily cap and the reports count these
+ */
+
+@Entity(
+    tableName = "run_options",
+    foreignKeys = [ForeignKey(entity = RunEntity::class, parentColumns = ["run_id"], childColumns = ["run_id"])],
+)
+data class RunOptionsEntity(
+    @PrimaryKey @ColumnInfo(name = "run_id") val runId: Long,
+    @ColumnInfo(name = "dry_run") val dryRun: Boolean,
+    @ColumnInfo(name = "oldest_first") val oldestFirst: Boolean,
+    /** After an edge block the run may not be resumed before this time (epoch millis). */
+    @ColumnInfo(name = "resume_not_before") val resumeNotBefore: Long?,
+    @ColumnInfo(name = "created_at") val createdAt: Long,
+)
+
+@Entity(
+    tableName = "run_results",
+    primaryKeys = ["run_id", "message_id"],
+    foreignKeys = [
+        ForeignKey(entity = RunEntity::class, parentColumns = ["run_id"], childColumns = ["run_id"]),
+        ForeignKey(entity = MessageEntity::class, parentColumns = ["message_id"], childColumns = ["message_id"]),
+    ],
+    indices = [Index(value = ["message_id"])],
+)
+data class RunResultEntity(
+    @ColumnInfo(name = "run_id") val runId: Long,
+    @ColumnInfo(name = "message_id") val messageId: Long,
+    /** A `DryVerdict` name. */
+    @ColumnInfo(name = "verdict") val verdict: String,
+)
+
+@Entity(
+    tableName = "delete_log",
+    foreignKeys = [ForeignKey(entity = MessageEntity::class, parentColumns = ["message_id"], childColumns = ["message_id"])],
+    indices = [Index(value = ["deleted_at"])],
+)
+data class DeleteLogEntity(
+    @PrimaryKey @ColumnInfo(name = "message_id") val messageId: Long,
+    @ColumnInfo(name = "run_id") val runId: Long,
+    @ColumnInfo(name = "deleted_at") val deletedAt: Long,
+)

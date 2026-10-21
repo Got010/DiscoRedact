@@ -73,7 +73,7 @@ fun SettingsScreen(vm: AppViewModel) {
                     }
                 }
             }
-            Text("The executor (milestone 2) uses these; this version sends nothing.", style = MaterialTheme.typography.bodySmall)
+            Text("A run started after a change uses the new preset; a running session keeps the one it started with.", style = MaterialTheme.typography.bodySmall)
 
             HorizontalDivider()
             Text("Daily cap", style = MaterialTheme.typography.titleMedium)

@@ -1,5 +1,9 @@
 package app.discoredact.data
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -32,9 +36,30 @@ class MigrationScaffoldTest {
     }
 
     @Test
-    fun schemaOneHasNoMigrationYet() {
-        assertEquals(1, AppDatabase.VERSION)
-        assertEquals(0, AppDatabase.MIGRATIONS.size)
+    fun schemaTwoHasTheOneMigration() {
+        assertEquals(2, AppDatabase.VERSION)
+        assertEquals(1, AppDatabase.MIGRATIONS.size)
+        assertEquals(1, AppDatabase.MIGRATION_1_2.startVersion)
+        assertEquals(2, AppDatabase.MIGRATION_1_2.endVersion)
+    }
+
+    /**
+     * The migration's SQL is exactly what Room generates for schema 2's new tables and indices, so a database
+     * migrated from 1 and a fresh one are identical (the instrumented MigrationTestHelper check needs a device).
+     */
+    @Test
+    fun migrationOneToTwoCreatesExactlyWhatRoomGeneratesForTheNewTables() {
+        val db = Json.parseToJsonElement(File(dir, "2.json").readText()).jsonObject["database"]!!.jsonObject
+        val expected = HashSet<String>()
+        for (e in db["entities"]!!.jsonArray.map { it.jsonObject }) {
+            val name = e["tableName"]!!.jsonPrimitive.content
+            if (name !in setOf("run_options", "run_results", "delete_log")) continue
+            expected += e["createSql"]!!.jsonPrimitive.content.replace("\${TABLE_NAME}", name)
+            val indices = e["indices"]?.jsonArray?.map { it.jsonObject }.orEmpty() // absent when a table has none
+            for (i in indices) expected += i["createSql"]!!.jsonPrimitive.content.replace("\${TABLE_NAME}", name)
+        }
+        val norm = { s: String -> s.replace(Regex("\\s+"), " ").trim() }
+        assertEquals(expected.map(norm).toSet(), AppDatabase.MIGRATION_1_2_SQL.map(norm).toSet())
     }
 
     @Test

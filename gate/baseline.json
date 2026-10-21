@@ -21,7 +21,13 @@
   },
   "permissions": {
     "requested": [
-      "android.permission.INTERNET"
+      "android.permission.ACCESS_NETWORK_STATE",
+      "android.permission.FOREGROUND_SERVICE",
+      "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
+      "android.permission.INTERNET",
+      "android.permission.POST_NOTIFICATIONS",
+      "android.permission.RECEIVE_BOOT_COMPLETED",
+      "android.permission.WAKE_LOCK"
     ],
     "declared": []
   },
@@ -82,6 +88,137 @@
       "data": []
     },
     {
+      "type": "receiver",
+      "name": "androidx.work.impl.background.systemalarm.ConstraintProxy$BatteryChargingProxy",
+      "exported": false,
+      "permission": null,
+      "read_permission": null,
+      "write_permission": null,
+      "grant_uri_permissions": null,
+      "authorities": [],
+      "foreground_service_type": null,
+      "actions": [
+        "android.intent.action.ACTION_POWER_CONNECTED",
+        "android.intent.action.ACTION_POWER_DISCONNECTED"
+      ],
+      "categories": [],
+      "data": []
+    },
+    {
+      "type": "receiver",
+      "name": "androidx.work.impl.background.systemalarm.ConstraintProxy$BatteryNotLowProxy",
+      "exported": false,
+      "permission": null,
+      "read_permission": null,
+      "write_permission": null,
+      "grant_uri_permissions": null,
+      "authorities": [],
+      "foreground_service_type": null,
+      "actions": [
+        "android.intent.action.BATTERY_LOW",
+        "android.intent.action.BATTERY_OKAY"
+      ],
+      "categories": [],
+      "data": []
+    },
+    {
+      "type": "receiver",
+      "name": "androidx.work.impl.background.systemalarm.ConstraintProxy$NetworkStateProxy",
+      "exported": false,
+      "permission": null,
+      "read_permission": null,
+      "write_permission": null,
+      "grant_uri_permissions": null,
+      "authorities": [],
+      "foreground_service_type": null,
+      "actions": [
+        "android.net.conn.CONNECTIVITY_CHANGE"
+      ],
+      "categories": [],
+      "data": []
+    },
+    {
+      "type": "receiver",
+      "name": "androidx.work.impl.background.systemalarm.ConstraintProxy$StorageNotLowProxy",
+      "exported": false,
+      "permission": null,
+      "read_permission": null,
+      "write_permission": null,
+      "grant_uri_permissions": null,
+      "authorities": [],
+      "foreground_service_type": null,
+      "actions": [
+        "android.intent.action.DEVICE_STORAGE_LOW",
+        "android.intent.action.DEVICE_STORAGE_OK"
+      ],
+      "categories": [],
+      "data": []
+    },
+    {
+      "type": "receiver",
+      "name": "androidx.work.impl.background.systemalarm.ConstraintProxyUpdateReceiver",
+      "exported": false,
+      "permission": null,
+      "read_permission": null,
+      "write_permission": null,
+      "grant_uri_permissions": null,
+      "authorities": [],
+      "foreground_service_type": null,
+      "actions": [
+        "androidx.work.impl.background.systemalarm.UpdateProxies"
+      ],
+      "categories": [],
+      "data": []
+    },
+    {
+      "type": "receiver",
+      "name": "androidx.work.impl.background.systemalarm.RescheduleReceiver",
+      "exported": false,
+      "permission": null,
+      "read_permission": null,
+      "write_permission": null,
+      "grant_uri_permissions": null,
+      "authorities": [],
+      "foreground_service_type": null,
+      "actions": [
+        "android.intent.action.BOOT_COMPLETED",
+        "android.intent.action.TIMEZONE_CHANGED",
+        "android.intent.action.TIME_SET"
+      ],
+      "categories": [],
+      "data": []
+    },
+    {
+      "type": "receiver",
+      "name": "androidx.work.impl.diagnostics.DiagnosticsReceiver",
+      "exported": true,
+      "permission": "android.permission.DUMP",
+      "read_permission": null,
+      "write_permission": null,
+      "grant_uri_permissions": null,
+      "authorities": [],
+      "foreground_service_type": null,
+      "actions": [
+        "androidx.work.diagnostics.REQUEST_DIAGNOSTICS"
+      ],
+      "categories": [],
+      "data": []
+    },
+    {
+      "type": "receiver",
+      "name": "androidx.work.impl.utils.ForceStopRunnable$BroadcastReceiver",
+      "exported": false,
+      "permission": null,
+      "read_permission": null,
+      "write_permission": null,
+      "grant_uri_permissions": null,
+      "authorities": [],
+      "foreground_service_type": null,
+      "actions": [],
+      "categories": [],
+      "data": []
+    },
+    {
       "type": "service",
       "name": "androidx.room.MultiInstanceInvalidationService",
       "exported": false,
@@ -91,6 +228,48 @@
       "grant_uri_permissions": null,
       "authorities": [],
       "foreground_service_type": null,
+      "actions": [],
+      "categories": [],
+      "data": []
+    },
+    {
+      "type": "service",
+      "name": "androidx.work.impl.background.systemalarm.SystemAlarmService",
+      "exported": false,
+      "permission": null,
+      "read_permission": null,
+      "write_permission": null,
+      "grant_uri_permissions": null,
+      "authorities": [],
+      "foreground_service_type": null,
+      "actions": [],
+      "categories": [],
+      "data": []
+    },
+    {
+      "type": "service",
+      "name": "androidx.work.impl.background.systemjob.SystemJobService",
+      "exported": true,
+      "permission": "android.permission.BIND_JOB_SERVICE",
+      "read_permission": null,
+      "write_permission": null,
+      "grant_uri_permissions": null,
+      "authorities": [],
+      "foreground_service_type": null,
+      "actions": [],
+      "categories": [],
+      "data": []
+    },
+    {
+      "type": "service",
+      "name": "androidx.work.impl.foreground.SystemForegroundService",
+      "exported": false,
+      "permission": null,
+      "read_permission": null,
+      "write_permission": null,
+      "grant_uri_permissions": null,
+      "authorities": [],
+      "foreground_service_type": "0x1",
       "actions": [],
       "categories": [],
       "data": []
@@ -104,7 +283,104 @@
   ],
   "extra_code": [],
   "desugared_library": false,
-  "network_api": [],
+  "network_api": [
+    {
+      "value": "Landroid/net/ConnectivityManager$NetworkCallback;",
+      "note": "WorkManager 2.10.3 (NetworkStateTracker): the CONNECTED constraint of a real run's worker; reads connectivity only, opens no connection"
+    },
+    {
+      "value": "Landroid/net/ConnectivityManager;",
+      "note": "WorkManager 2.10.3 (NetworkStateTracker): the CONNECTED constraint of a real run's worker; reads connectivity only, opens no connection"
+    },
+    {
+      "value": "Landroid/net/Network;",
+      "note": "WorkManager 2.10.3 (NetworkStateTracker): the CONNECTED constraint of a real run's worker; reads connectivity only, opens no connection"
+    },
+    {
+      "value": "Landroid/net/NetworkCapabilities;",
+      "note": "WorkManager 2.10.3 (NetworkStateTracker): the CONNECTED constraint of a real run's worker; reads connectivity only, opens no connection"
+    },
+    {
+      "value": "Landroid/net/NetworkInfo;",
+      "note": "WorkManager 2.10.3 (NetworkStateTracker): the CONNECTED constraint of a real run's worker; reads connectivity only, opens no connection"
+    },
+    {
+      "value": "Landroid/net/NetworkRequest$Builder;",
+      "note": "WorkManager 2.10.3 (NetworkStateTracker): the CONNECTED constraint of a real run's worker; reads connectivity only, opens no connection"
+    },
+    {
+      "value": "Landroid/net/NetworkRequest;",
+      "note": "WorkManager 2.10.3 (NetworkStateTracker): the CONNECTED constraint of a real run's worker; reads connectivity only, opens no connection"
+    },
+    {
+      "value": "Landroid/net/http/X509TrustManagerExtensions;",
+      "note": "OkHttp 5.1.0's Android platform: certificate-chain cleaning for the TLS connection to discord.com"
+    },
+    {
+      "value": "Ljava/net/Proxy;",
+      "note": "OkHttp 5.1.0: the one client's TLS connection to discord.com (CLAUDE.md rules 1-2); the host allowlist interceptor refuses any other host before any of this runs; one request at a time, no cache, cookies, redirects or logging"
+    },
+    {
+      "value": "Ljava/net/ProxySelector;",
+      "note": "OkHttp 5.1.0: the one client's TLS connection to discord.com (CLAUDE.md rules 1-2); the host allowlist interceptor refuses any other host before any of this runs; one request at a time, no cache, cookies, redirects or logging"
+    },
+    {
+      "value": "Ljava/net/Socket;",
+      "note": "OkHttp 5.1.0: the one client's TLS connection to discord.com (CLAUDE.md rules 1-2); the host allowlist interceptor refuses any other host before any of this runs; one request at a time, no cache, cookies, redirects or logging"
+    },
+    {
+      "value": "Ljava/net/SocketAddress;",
+      "note": "OkHttp 5.1.0: the one client's TLS connection to discord.com (CLAUDE.md rules 1-2); the host allowlist interceptor refuses any other host before any of this runs; one request at a time, no cache, cookies, redirects or logging"
+    },
+    {
+      "value": "Ljava/net/URI;",
+      "note": "OkHttp 5.1.0: the one client's TLS connection to discord.com (CLAUDE.md rules 1-2); the host allowlist interceptor refuses any other host before any of this runs; one request at a time, no cache, cookies, redirects or logging"
+    },
+    {
+      "value": "Ljavax/net/SocketFactory;",
+      "note": "OkHttp 5.1.0: the one client's TLS connection to discord.com (CLAUDE.md rules 1-2); the host allowlist interceptor refuses any other host before any of this runs; one request at a time, no cache, cookies, redirects or logging"
+    },
+    {
+      "value": "Ljavax/net/ssl/HostnameVerifier;",
+      "note": "OkHttp 5.1.0: the one client's TLS connection to discord.com (CLAUDE.md rules 1-2); the host allowlist interceptor refuses any other host before any of this runs; one request at a time, no cache, cookies, redirects or logging"
+    },
+    {
+      "value": "Ljavax/net/ssl/SSLContext;",
+      "note": "OkHttp 5.1.0: the one client's TLS connection to discord.com (CLAUDE.md rules 1-2); the host allowlist interceptor refuses any other host before any of this runs; one request at a time, no cache, cookies, redirects or logging"
+    },
+    {
+      "value": "Ljavax/net/ssl/SSLException;",
+      "note": "OkHttp 5.1.0: the one client's TLS connection to discord.com (CLAUDE.md rules 1-2); the host allowlist interceptor refuses any other host before any of this runs; one request at a time, no cache, cookies, redirects or logging"
+    },
+    {
+      "value": "Ljavax/net/ssl/SSLSession;",
+      "note": "OkHttp 5.1.0: the one client's TLS connection to discord.com (CLAUDE.md rules 1-2); the host allowlist interceptor refuses any other host before any of this runs; one request at a time, no cache, cookies, redirects or logging"
+    },
+    {
+      "value": "Ljavax/net/ssl/SSLSocketFactory;",
+      "note": "OkHttp 5.1.0: the one client's TLS connection to discord.com (CLAUDE.md rules 1-2); the host allowlist interceptor refuses any other host before any of this runs; one request at a time, no cache, cookies, redirects or logging"
+    },
+    {
+      "value": "Ljavax/net/ssl/TrustManagerFactory;",
+      "note": "OkHttp 5.1.0: the one client's TLS connection to discord.com (CLAUDE.md rules 1-2); the host allowlist interceptor refuses any other host before any of this runs; one request at a time, no cache, cookies, redirects or logging"
+    },
+    {
+      "value": "Ljavax/net/ssl/X509TrustManager;",
+      "note": "OkHttp 5.1.0: the one client's TLS connection to discord.com (CLAUDE.md rules 1-2); the host allowlist interceptor refuses any other host before any of this runs; one request at a time, no cache, cookies, redirects or logging"
+    },
+    {
+      "value": "Lokhttp3/internal/platform/PlatformInitializer;",
+      "note": "OkHttp 5.1.0's Android platform bootstrap (no connection by itself)"
+    },
+    {
+      "value": "[Ljavax/net/ssl/KeyManager;",
+      "note": "OkHttp 5.1.0: the one client's TLS connection to discord.com (CLAUDE.md rules 1-2); the host allowlist interceptor refuses any other host before any of this runs; one request at a time, no cache, cookies, redirects or logging"
+    },
+    {
+      "value": "[Ljavax/net/ssl/TrustManager;",
+      "note": "OkHttp 5.1.0: the one client's TLS connection to discord.com (CLAUDE.md rules 1-2); the host allowlist interceptor refuses any other host before any of this runs; one request at a time, no cache, cookies, redirects or logging"
+    }
+  ],
   "dependencies": {
     "project": ":app",
     "configuration": "releaseRuntimeClasspath",
@@ -155,6 +431,7 @@
       "androidx.compose.ui:ui-util-android",
       "androidx.compose:compose-bom",
       "androidx.concurrent:concurrent-futures",
+      "androidx.concurrent:concurrent-futures-ktx",
       "androidx.core:core",
       "androidx.core:core-ktx",
       "androidx.core:core-viewtree",
@@ -165,7 +442,9 @@
       "androidx.lifecycle:lifecycle-common",
       "androidx.lifecycle:lifecycle-common-java8",
       "androidx.lifecycle:lifecycle-common-jvm",
+      "androidx.lifecycle:lifecycle-livedata",
       "androidx.lifecycle:lifecycle-livedata-core",
+      "androidx.lifecycle:lifecycle-livedata-core-ktx",
       "androidx.lifecycle:lifecycle-process",
       "androidx.lifecycle:lifecycle-runtime",
       "androidx.lifecycle:lifecycle-runtime-android",
@@ -173,6 +452,7 @@
       "androidx.lifecycle:lifecycle-runtime-compose-android",
       "androidx.lifecycle:lifecycle-runtime-ktx",
       "androidx.lifecycle:lifecycle-runtime-ktx-android",
+      "androidx.lifecycle:lifecycle-service",
       "androidx.lifecycle:lifecycle-viewmodel",
       "androidx.lifecycle:lifecycle-viewmodel-android",
       "androidx.lifecycle:lifecycle-viewmodel-compose",
@@ -197,8 +477,15 @@
       "androidx.sqlite:sqlite-framework-android",
       "androidx.startup:startup-runtime",
       "androidx.tracing:tracing",
+      "androidx.tracing:tracing-ktx",
       "androidx.versionedparcelable:versionedparcelable",
+      "androidx.work:work-runtime",
+      "androidx.work:work-runtime-ktx",
       "com.google.guava:listenablefuture",
+      "com.squareup.okhttp3:okhttp",
+      "com.squareup.okhttp3:okhttp-android",
+      "com.squareup.okio:okio",
+      "com.squareup.okio:okio-jvm",
       "org.jetbrains.kotlin:kotlin-stdlib",
       "org.jetbrains.kotlin:kotlin-stdlib-common",
       "org.jetbrains.kotlinx:kotlinx-coroutines-android",
@@ -218,12 +505,20 @@
   },
   "hosts": [
     {
+      "value": "https://developer.android.com",
+      "note": "AndroidX (WorkManager/lifecycle) documentation link in library error-message text; a string only, never contacted"
+    },
+    {
+      "value": "https://discord.com",
+      "note": "The one endpoint (CLAUDE.md rule 1): DiscordTransport.PRODUCTION_BASE_URL (https://discord.com/api/v9), the Origin header and the Referer prefix; the only host the allowlist admits"
+    },
+    {
       "value": "https://goo.gle",
-      "note": "AndroidX/Compose error-message link (short-link domain in library text; module not identified, Google Maven jars are not reachable from the agent session); a string only: the APK has no network API type and M1 has no network code"
+      "note": "AndroidX/Compose error-message link (short-link domain in library text; module not identified, Google Maven jars are not reachable from the agent session); a string only, never contacted"
     },
     {
       "value": "https://youtrack.jetbrains.com",
-      "note": "kotlin-stdlib 2.2.20 error-message text (issue links such as KT-46465); a string only: the APK has no network API type and M1 has no network code"
+      "note": "kotlin-stdlib 2.2.20 error-message text (issue links such as KT-46465); a string only, never contacted"
     }
   ],
   "signing": {

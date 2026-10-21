@@ -73,6 +73,8 @@ fun ChannelsScreen(vm: AppViewModel) {
             TopAppBar(
                 title = { Text("DiscoRedact") },
                 actions = {
+                    val runCount by vm.runCount.collectAsState()
+                    if (runCount > 0) TextButton(onClick = { vm.go(Route.Run) }) { Text("Run") }
                     TextButton(onClick = { vm.go(Route.Import) }) { Text("Import") }
                     IconButton(onClick = { vm.go(Route.Settings) }) { Icon(Icons.Filled.Settings, contentDescription = "Settings") }
                 },
