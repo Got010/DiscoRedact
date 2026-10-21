@@ -98,6 +98,16 @@ interface MessageDao {
     @Query("UPDATE messages SET selected = :selected, updated_at = :now WHERE message_id IN (:ids)")
     suspend fun setSelected(ids: List<Long>, selected: Boolean, now: Long)
 
+    /**
+     * A filter's write. Messages with a manual toggle are excluded in SQL as well, so a toggle made while the filter
+     * was reading pages is never overwritten (precedence: manual > filter).
+     */
+    @Query(
+        "UPDATE messages SET selected = :selected, updated_at = :now WHERE message_id IN (:ids) " +
+            "AND message_id NOT IN (SELECT message_id FROM selection_overrides)",
+    )
+    suspend fun setSelectedByFilter(ids: List<Long>, selected: Boolean, now: Long)
+
     @Query("INSERT OR REPLACE INTO selection_overrides (message_id, selected) SELECT message_id, :selected FROM messages WHERE message_id IN (:ids)")
     suspend fun setOverrides(ids: List<Long>, selected: Boolean)
 
@@ -121,6 +131,12 @@ interface RunDao {
 
     @Query("SELECT EXISTS(SELECT 1 FROM run_messages WHERE run_id = :runId AND message_id = :messageId)")
     suspend fun inRun(runId: Long, messageId: Long): Boolean
+
+    @Query("SELECT run_id, started_at, ended_at FROM runs")
+    suspend fun runStates(): List<RunStateRow>
+
+    @Query("UPDATE runs SET ended_at = :now, stop_reason = :reason WHERE run_id IN (:ids)")
+    suspend fun close(ids: List<Long>, now: Long, reason: String)
 
     @Query("SELECT COUNT(*) FROM runs")
     fun observeRunCount(): Flow<Int>

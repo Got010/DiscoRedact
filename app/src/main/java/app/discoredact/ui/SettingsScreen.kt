@@ -112,12 +112,16 @@ fun SettingsScreen(vm: AppViewModel) {
             HorizontalDivider()
             Text("Local data", style = MaterialTheme.typography.titleMedium)
             Text("$contentCount messages have their text stored on this phone (for the message browser and keyword filters).", style = MaterialTheme.typography.bodySmall)
-            OutlinedButton(onClick = { confirmPurge = true }, enabled = contentCount > 0, modifier = Modifier.fillMaxWidth()) { Text("Purge local content") }
+            val busy = vm.busy
+            if (busy) Text("An import, filter or freeze is running; Purge and Wipe wait until it ends.", style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = { confirmPurge = true }, enabled = contentCount > 0 && !busy, modifier = Modifier.fillMaxWidth()) { Text("Purge local content") }
             Button(
                 onClick = { confirmWipe = true },
+                enabled = !busy,
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError),
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Wipe everything") }
+            vm.settingsNotice?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
         }
     }
 
