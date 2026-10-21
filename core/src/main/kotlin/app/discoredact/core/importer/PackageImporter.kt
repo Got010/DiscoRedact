@@ -200,8 +200,6 @@ class PackageImporter(private val limits: ImportLimits = ImportLimits()) {
             json.decodeToSequence<JsonElement>(withoutBom(NonClosing(zip)), DecodeSequenceMode.ARRAY_WRAPPED).iterator()
         } catch (_: IllegalArgumentException) {
             return FileResult(false, bad) // SerializationException is an IllegalArgumentException
-        } catch (_: StackOverflowError) {
-            return FileResult(false, bad) // absurdly deep nesting: the decoder recurses per level
         }
         while (true) {
             val el = try {
