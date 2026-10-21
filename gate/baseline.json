@@ -317,6 +317,38 @@
       "note": "OkHttp 5.1.0's Android platform: certificate-chain cleaning for the TLS connection to discord.com"
     },
     {
+      "value": "Landroid/net/ssl/SSLSockets;",
+      "note": "OkHttp 5.1.0's Android platform TLS (socket configuration); no connection by itself"
+    },
+    {
+      "value": "Ljava/net/ConnectException;",
+      "note": "OkHttp 5.1.0's TLS/socket classes for the one client's connection to discord.com (CLAUDE.md rules 1-2); the host allowlist refuses any other host before any of this runs"
+    },
+    {
+      "value": "Ljava/net/IDN;",
+      "note": "OkHttp 5.1.0's TLS/socket classes for the one client's connection to discord.com (CLAUDE.md rules 1-2); the host allowlist refuses any other host before any of this runs"
+    },
+    {
+      "value": "Ljava/net/Inet6Address;",
+      "note": "OkHttp 5.1.0's TLS/socket classes for the one client's connection to discord.com (CLAUDE.md rules 1-2); the host allowlist refuses any other host before any of this runs"
+    },
+    {
+      "value": "Ljava/net/InetAddress;",
+      "note": "OkHttp 5.1.0's TLS/socket classes for the one client's connection to discord.com (CLAUDE.md rules 1-2); the host allowlist refuses any other host before any of this runs"
+    },
+    {
+      "value": "Ljava/net/InetSocketAddress;",
+      "note": "OkHttp 5.1.0's TLS/socket classes for the one client's connection to discord.com (CLAUDE.md rules 1-2); the host allowlist refuses any other host before any of this runs"
+    },
+    {
+      "value": "Ljava/net/ProtocolException;",
+      "note": "OkHttp 5.1.0's TLS/socket classes for the one client's connection to discord.com (CLAUDE.md rules 1-2); the host allowlist refuses any other host before any of this runs"
+    },
+    {
+      "value": "Ljava/net/Proxy$Type;",
+      "note": "OkHttp 5.1.0's TLS/socket classes for the one client's connection to discord.com (CLAUDE.md rules 1-2); the host allowlist refuses any other host before any of this runs"
+    },
+    {
       "value": "Ljava/net/Proxy;",
       "note": "OkHttp 5.1.0: the one client's TLS connection to discord.com (CLAUDE.md rules 1-2); the host allowlist interceptor refuses any other host before any of this runs; one request at a time, no cache, cookies, redirects or logging"
     },
@@ -333,8 +365,28 @@
       "note": "OkHttp 5.1.0: the one client's TLS connection to discord.com (CLAUDE.md rules 1-2); the host allowlist interceptor refuses any other host before any of this runs; one request at a time, no cache, cookies, redirects or logging"
     },
     {
+      "value": "Ljava/net/SocketException;",
+      "note": "OkHttp 5.1.0's TLS/socket classes for the one client's connection to discord.com (CLAUDE.md rules 1-2); the host allowlist refuses any other host before any of this runs"
+    },
+    {
+      "value": "Ljava/net/SocketTimeoutException;",
+      "note": "OkHttp 5.1.0's TLS/socket classes for the one client's connection to discord.com (CLAUDE.md rules 1-2); the host allowlist refuses any other host before any of this runs"
+    },
+    {
       "value": "Ljava/net/URI;",
       "note": "OkHttp 5.1.0: the one client's TLS connection to discord.com (CLAUDE.md rules 1-2); the host allowlist interceptor refuses any other host before any of this runs; one request at a time, no cache, cookies, redirects or logging"
+    },
+    {
+      "value": "Ljava/net/URISyntaxException;",
+      "note": "OkHttp 5.1.0's TLS/socket classes for the one client's connection to discord.com (CLAUDE.md rules 1-2); the host allowlist refuses any other host before any of this runs"
+    },
+    {
+      "value": "Ljava/net/UnknownHostException;",
+      "note": "OkHttp 5.1.0's TLS/socket classes for the one client's connection to discord.com (CLAUDE.md rules 1-2); the host allowlist refuses any other host before any of this runs"
+    },
+    {
+      "value": "Ljava/net/UnknownServiceException;",
+      "note": "OkHttp 5.1.0's TLS/socket classes for the one client's connection to discord.com (CLAUDE.md rules 1-2); the host allowlist refuses any other host before any of this runs"
     },
     {
       "value": "Ljavax/net/SocketFactory;",
@@ -353,8 +405,24 @@
       "note": "OkHttp 5.1.0: the one client's TLS connection to discord.com (CLAUDE.md rules 1-2); the host allowlist interceptor refuses any other host before any of this runs; one request at a time, no cache, cookies, redirects or logging"
     },
     {
+      "value": "Ljavax/net/ssl/SSLHandshakeException;",
+      "note": "OkHttp 5.1.0's TLS/socket classes for the one client's connection to discord.com (CLAUDE.md rules 1-2); the host allowlist refuses any other host before any of this runs"
+    },
+    {
+      "value": "Ljavax/net/ssl/SSLParameters;",
+      "note": "OkHttp 5.1.0's TLS/socket classes for the one client's connection to discord.com (CLAUDE.md rules 1-2); the host allowlist refuses any other host before any of this runs"
+    },
+    {
+      "value": "Ljavax/net/ssl/SSLPeerUnverifiedException;",
+      "note": "OkHttp 5.1.0's TLS/socket classes for the one client's connection to discord.com (CLAUDE.md rules 1-2); the host allowlist refuses any other host before any of this runs"
+    },
+    {
       "value": "Ljavax/net/ssl/SSLSession;",
       "note": "OkHttp 5.1.0: the one client's TLS connection to discord.com (CLAUDE.md rules 1-2); the host allowlist interceptor refuses any other host before any of this runs; one request at a time, no cache, cookies, redirects or logging"
+    },
+    {
+      "value": "Ljavax/net/ssl/SSLSocket;",
+      "note": "OkHttp 5.1.0's TLS/socket classes for the one client's connection to discord.com (CLAUDE.md rules 1-2); the host allowlist refuses any other host before any of this runs"
     },
     {
       "value": "Ljavax/net/ssl/SSLSocketFactory;",
@@ -371,6 +439,18 @@
     {
       "value": "Lokhttp3/internal/platform/PlatformInitializer;",
       "note": "OkHttp 5.1.0's Android platform bootstrap (no connection by itself)"
+    },
+    {
+      "value": "[Ljava/net/InetAddress;",
+      "note": "OkHttp 5.1.0's TLS/socket classes for the one client's connection to discord.com (CLAUDE.md rules 1-2); the host allowlist refuses any other host before any of this runs"
+    },
+    {
+      "value": "[Ljava/net/Proxy$Type;",
+      "note": "OkHttp 5.1.0's TLS/socket classes for the one client's connection to discord.com (CLAUDE.md rules 1-2); the host allowlist refuses any other host before any of this runs"
+    },
+    {
+      "value": "[Ljava/net/Proxy;",
+      "note": "OkHttp 5.1.0's TLS/socket classes for the one client's connection to discord.com (CLAUDE.md rules 1-2); the host allowlist refuses any other host before any of this runs"
     },
     {
       "value": "[Ljavax/net/ssl/KeyManager;",
@@ -504,6 +584,10 @@
     "desugaring": []
   },
   "hosts": [
+    {
+      "value": "discord.com",
+      "note": "The allowlist's allowed-host constant (HostAllowlist.DISCORD_HOST); the only host the app is allowed to contact. The app builds URLs only under https://discord.com/api/v9"
+    },
     {
       "value": "https://developer.android.com",
       "note": "AndroidX (WorkManager/lifecycle) documentation link in library error-message text; a string only, never contacted"
