@@ -103,4 +103,16 @@ class CurlParserTest {
         assertTrue(status.stale); assertEquals(15L, status.ageDays)
         assertFalse(CredentialStatus(0L, 13L * 24 * 3_600_000).stale)
     }
+
+    @Test fun codecRejectsJsonMissingAnyOneField() {
+        val full = mapOf("authorization" to "t", "user_agent" to "ua", "super_properties" to "p", "locale" to "en", "timezone" to "UTC", "captured_at" to "1")
+        assertNotNull(CredentialCodec.decode(jsonOf(full)))
+        for (drop in full.keys) {
+            assertNull("accepted without $drop", CredentialCodec.decode(jsonOf(full - drop)))
+        }
+        assertNull(CredentialCodec.decode(jsonOf(full + ("captured_at" to "not-a-number"))))
+    }
+
+    private fun jsonOf(m: Map<String, String>): ByteArray =
+        m.entries.joinToString(prefix = "{", postfix = "}") { "\"${it.key}\":\"${it.value}\"" }.toByteArray()
 }
