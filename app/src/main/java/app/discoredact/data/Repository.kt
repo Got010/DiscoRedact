@@ -14,6 +14,9 @@ import app.discoredact.core.model.MessageStatus
 import app.discoredact.core.selection.DeletePlan
 import app.discoredact.core.selection.DeletePlanBuilder
 import app.discoredact.core.selection.MessageFilter
+import app.discoredact.core.selection.RunRules
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import app.discoredact.core.selection.SelectionRules
 
 /** Counts the filter screen shows live, before anything is applied. */
@@ -42,8 +45,12 @@ class Repository(private val db: AppDatabase, private val clock: () -> Long = Sy
 
     // ---- Import -------------------------------------------------------------------------------------------------
 
-    /** Streams the package into Room in batches. Re-importing adds new messages only; selections are kept. */
-    fun import(source: ZipSource, progressCallback: (ImportProgress) -> Unit): ImportReport {
+    /**
+     * Streams the package into Room in batches. Re-importing adds new messages only; selections are kept.
+     * [checkCancelled] runs before every batch write and throws to stop the import (the caller's coroutine was
+     * cancelled, e.g. by Wipe everything); rows already written stay, as after any interrupted import.
+     */
+    fun import(source: ZipSource, checkCancelled: () -> Unit = {}, progressCallback: (ImportProgress) -> Unit): ImportReport {
         val sink = object : ImportSink {
             override fun onChannels(channels: List<ImportedChannel>) {
                 db.runInTransaction(Runnable {
@@ -61,6 +68,7 @@ class Repository(private val db: AppDatabase, private val clock: () -> Long = Sy
             }
 
             override fun onMessages(batch: List<ImportedMessage>): Int {
+                checkCancelled()
                 val now = clock()
                 var inserted = 0
                 db.runInTransaction(Runnable {
@@ -187,8 +195,8 @@ class Repository(private val db: AppDatabase, private val clock: () -> Long = Sy
         }
         val now = clock()
         db.withTransaction {
-            toSelect.chunked(CHUNK).forEach { messages.setSelected(it, true, now) }
-            toClear.chunked(CHUNK).forEach { messages.setSelected(it, false, now) }
+            toSelect.chunked(CHUNK).forEach { messages.setSelectedByFilter(it, true, now) }
+            toClear.chunked(CHUNK).forEach { messages.setSelectedByFilter(it, false, now) }
         }
         return toSelect.size + toClear.size
     }
@@ -235,6 +243,10 @@ class Repository(private val db: AppDatabase, private val clock: () -> Long = Sy
             !now.sameSetAs(reviewed) -> FreezeResult.Changed(now)
             now.total == 0 -> FreezeResult.Empty
             else -> {
+                // The newest unstarted run is the only runnable one (RunRules.runnable; the M2 executor relies on
+                // it): every run frozen earlier and never started is closed as superseded before the new one.
+                val stale = RunRules.toSupersede(runs.runStates().map { it.toRow() })
+                if (stale.isNotEmpty()) runs.close(stale, clock(), RunRules.SUPERSEDED)
                 val runId = runs.insertRun(RunEntity(startedAt = null, endedAt = null, deletedCount = 0, stopReason = null))
                 val ids = now.messageIds()
                 ids.indices.chunked(CHUNK).forEach { idx ->
@@ -248,7 +260,19 @@ class Repository(private val db: AppDatabase, private val clock: () -> Long = Sy
 
     // ---- Settings actions ---------------------------------------------------------------------------------------
 
-    suspend fun purgeContent() = messages.purgeContent()
+    /**
+     * Clears every message's text, then checkpoints the WAL and vacuums (outside any transaction) so the old text
+     * leaves the write-ahead log and the freed pages of the database file.
+     */
+    suspend fun purgeContent() {
+        messages.purgeContent()
+        withContext(Dispatchers.IO) {
+            val sql = db.openHelper.writableDatabase
+            sql.query("PRAGMA wal_checkpoint(TRUNCATE)").use { it.moveToFirst() }
+            sql.execSQL("VACUUM")
+            sql.query("PRAGMA wal_checkpoint(TRUNCATE)").use { it.moveToFirst() }
+        }
+    }
 
     companion object {
         private const val CHUNK = 500

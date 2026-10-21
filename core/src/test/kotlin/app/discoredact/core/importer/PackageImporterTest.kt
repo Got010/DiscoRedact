@@ -283,4 +283,76 @@ class PackageImporterTest {
         assertEquals(123L, PackagePaths.folderDigits("c123"))
         assertNull(PackagePaths.folderDigits("abc"))
     }
+
+    private class SinkFailure : RuntimeException("database write failed")
+
+    /** A sink whose first batch write fails, as a full disk or a Room error would. */
+    private class FailingSink : ImportSink {
+        var calls = 0
+        override fun onChannels(channels: List<ImportedChannel>) = Unit
+        override fun onMessages(batch: List<ImportedMessage>): Int {
+            calls++
+            throw SinkFailure()
+        }
+    }
+
+    @Test
+    fun aSinkFailureInsideAJsonFileAbortsTheImportInsteadOfCountingAMalformedFile() {
+        val pkg = zip(
+            "messages/c870000000000000001/channel.json" to dm("870000000000000001"),
+            "messages/c870000000000000001/messages.json" to "[" + listOf(
+                jsonMessage("800000000000001001", ts, "a"), jsonMessage("800000000000001002", ts, "b"),
+            ).joinToString(",") + "]",
+        )
+        val sink = FailingSink()
+        try {
+            PackageImporter(ImportLimits(batchSize = 1)).import(source(pkg), sink)
+            throw AssertionError("the import should have failed")
+        } catch (_: SinkFailure) {
+        }
+        assertEquals(1, sink.calls)
+    }
+
+    @Test
+    fun aSinkFailureInsideACsvFileAbortsTheImport() {
+        val pkg = zip(
+            "messages/c870000000000000002/channel.json" to dm("870000000000000002"),
+            "messages/c870000000000000002/messages.csv" to "ID,Timestamp,Contents,Attachments\n800000000000001003,$ts,a,\n800000000000001004,$ts,b,\n",
+        )
+        val sink = FailingSink()
+        try {
+            PackageImporter(ImportLimits(batchSize = 1)).import(source(pkg), sink)
+            throw AssertionError("the import should have failed")
+        } catch (_: SinkFailure) {
+        }
+        assertEquals(1, sink.calls)
+    }
+
+    @Test
+    fun aByteOrderMarkBeforeMessagesJsonIsSkipped() {
+        val pkg = zip(
+            "messages/c880000000000000001/channel.json" to dm("880000000000000001"),
+            "messages/c880000000000000001/messages.json" to "\uFEFF[" + jsonMessage("800000000000001101", ts, "bom") + "]",
+        )
+        val (report, sink) = run(pkg)
+        assertEquals(listOf(800000000000001101L), sink.messages.map { it.messageId })
+        assertEquals(0, report.malformedFiles)
+    }
+
+    @Test
+    fun typeZeroWithoutAGuildKeyIsSkippedAndStrayNamesAreIgnored() {
+        val pkg = zip(
+            "messages/c890000000000000001/channel.json" to """{"id": "890000000000000001", "type": 0}""",
+            "messages/c890000000000000001/messages.json" to "[" + jsonMessage("800000000000001201", ts, "text channel") + "]",
+            "messages/c890000000000000002/channel.json" to dm("890000000000000002"),
+            "messages/c890000000000000002/user.json" to "[" + jsonMessage("800000000000001202", ts, "stray file") + "]",
+            "servers/messages/channel.json" to dm("890000000000000003"),
+        )
+        val (report, sink) = run(pkg)
+        assertEquals(listOf(890000000000000002L), sink.channels.map { it.channelId })
+        assertTrue(sink.messages.isEmpty())
+        assertEquals(1, report.skippedOtherFolders)
+        assertEquals(PackageEntry.Ignored, PackagePaths.classify("servers/messages/channel.json"))
+        assertEquals(PackageEntry.Ignored, PackagePaths.classify("messages/c1/user.json"))
+    }
 }

@@ -161,7 +161,7 @@ jobs:
 
       - name: Sign a test copy with a throwaway key (phone checks only, never published)
         id: testsign
-        if: ${{ !cancelled() && steps.gradle.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.gate.outcome == 'success' }}
         env:
           SHA: ${{ github.sha }}
         run: |
@@ -184,7 +184,7 @@ jobs:
           sha256sum "$out" "$UNSIGNED_APK"
 
       - name: Upload the APKs
-        if: ${{ !cancelled() && steps.gradle.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.gate.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: apks

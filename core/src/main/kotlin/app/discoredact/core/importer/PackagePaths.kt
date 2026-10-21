@@ -4,7 +4,8 @@ package app.discoredact.core.importer
  * Classifies ZIP entry names of a Discord data package. Only entries directly under a top-level `messages/`
  * folder (any case) are ever opened: `messages/index.json` and `messages/<folder>/{channel.json, messages.json,
  * messages.csv}`. Everything else (`account/`, `activity/`, `servers/`, `ads/`, support tickets, nested or
- * odd paths) is [PackageEntry.Ignored] and its bytes are never read by the importer (CLAUDE.md rule 4).
+ * odd paths) is [PackageEntry.Ignored]: ZipInputStream inflates and discards its bytes to reach the next entry, but
+ * the importer never parses or stores them (CLAUDE.md rule 4).
  */
 sealed interface PackageEntry {
     data object Index : PackageEntry

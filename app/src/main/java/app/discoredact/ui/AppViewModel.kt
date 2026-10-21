@@ -23,7 +23,10 @@ import app.discoredact.data.FilterPreview
 import app.discoredact.data.FreezeResult
 import app.discoredact.data.MessageRow
 import app.discoredact.data.Repository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -159,6 +162,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
     val review = ReviewState()
     private var previewJob: Job? = null
+    private var importJob: Job? = null
+    private var filterJob: Job? = null
+    private var freezeJob: Job? = null
+
+    /** True while Wipe everything runs; nothing else may start then. */
+    var wiping by mutableStateOf(false)
+        private set
+
+    /** A message for the Settings screen (a failed wipe). */
+    var settingsNotice by mutableStateOf<String?>(null)
+
+    /** Something is writing to the database: Wipe and Purge wait until it is done. */
+    val busy: Boolean
+        get() = wiping || importState is ImportState.Running || filters?.applying == true || review.freezing
 
     // ---- Navigation ---------------------------------------------------------------------------------------------
 
@@ -186,17 +203,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // ---- Import -------------------------------------------------------------------------------------------------
 
     fun import(uri: Uri) {
-        if (importState is ImportState.Running) return
+        if (importState is ImportState.Running || wiping) return
         importState = ImportState.Running(null)
         val resolver = getApplication<Application>().contentResolver
-        viewModelScope.launch {
+        importJob = viewModelScope.launch {
             importState = try {
                 val report = withContext(Dispatchers.IO) {
-                    repo.import({ resolver.openInputStream(uri) ?: throw IOException("the file could not be opened") }) { p ->
+                    val job = coroutineContext[Job]
+                    repo.import(
+                        source = { resolver.openInputStream(uri) ?: throw IOException("the file could not be opened") },
+                        checkCancelled = { job?.ensureActive() },
+                    ) { p ->
                         viewModelScope.launch(Dispatchers.Main) { if (importState is ImportState.Running) importState = ImportState.Running(p) }
                     }
                 }
                 ImportState.Done(report)
+            } catch (e: CancellationException) {
+                importState = ImportState.Idle
+                throw e
             } catch (e: Exception) {
                 ImportState.Failed(e.javaClass.simpleName + (e.message?.let { ": $it" } ?: ""))
             }
@@ -256,9 +280,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun clearFilterSelection(state: FilterState) = runFilterAction(state) { repo.clearFilterSelection(scopeIds(state)) }
 
     private fun runFilterAction(state: FilterState, action: suspend () -> Int) {
-        if (state.applying) return
+        if (state.applying || wiping) return
         state.applying = true
-        viewModelScope.launch {
+        filterJob = viewModelScope.launch {
             try {
                 val changed = withContext(Dispatchers.Default) { action() }
                 state.notice = "$changed messages changed."
@@ -296,9 +320,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun confirmFreeze() {
         val plan = review.plan ?: return
-        if (review.freezing) return
+        if (review.freezing || wiping) return
         review.freezing = true
-        viewModelScope.launch {
+        freezeJob = viewModelScope.launch {
             try {
                 when (val r = withContext(Dispatchers.Default) { repo.freeze(plan) }) {
                     is FreezeResult.Frozen -> {
@@ -311,6 +335,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     FreezeResult.Empty -> review.notice = "Nothing to delete."
                 }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                review.notice = "Freezing failed, nothing was frozen: ${e.javaClass.simpleName}${e.message?.let { ": $it" } ?: ""}"
             } finally {
                 review.freezing = false
             }
@@ -324,16 +352,47 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setQuietHours(q: QuietHours) = graph.settings.update { it.copy(pacing = it.pacing.copy(quietHours = q)) }
     fun setDryRun(on: Boolean) = graph.settings.update { it.copy(dryRun = on) }
 
-    fun purgeContent() = viewModelScope.launch { repo.purgeContent() }
-
-    fun wipeEverything() {
+    fun purgeContent() {
+        if (busy) return
         viewModelScope.launch {
-            withContext(Dispatchers.IO) { graph.wipeEverything() }
-            generation.value += 1
-            importState = ImportState.Idle
-            browser = null
-            filters = null
-            home()
+            try {
+                repo.purgeContent()
+                settingsNotice = "Local text purged."
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                settingsNotice = "Purge failed: ${e.javaClass.simpleName}${e.message?.let { ": $it" } ?: ""}"
+            }
+        }
+    }
+
+    /**
+     * Deletes the database and settings. The import is cancelled and joined first, and a running filter apply or
+     * freeze is joined, so no write can overlap the delete; nothing new starts while [wiping] is set.
+     */
+    fun wipeEverything() {
+        if (wiping) return
+        wiping = true
+        viewModelScope.launch {
+            try {
+                previewJob?.cancel()
+                importJob?.cancelAndJoin()
+                filterJob?.join()
+                freezeJob?.join()
+                withContext(Dispatchers.IO) { graph.wipeEverything() }
+                generation.value += 1
+                importState = ImportState.Idle
+                browser = null
+                filters = null
+                settingsNotice = null
+                home()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                settingsNotice = "Wipe failed: ${e.javaClass.simpleName}${e.message?.let { ": $it" } ?: ""}. Try again, or uninstall the app to remove its data."
+            } finally {
+                wiping = false
+            }
         }
     }
 }

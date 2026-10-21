@@ -24,6 +24,15 @@ data class ChannelSummary(
     fun toSel() = ChannelSel(channelId, displayName, mode, state, included)
 }
 
+/** A run's start and end, for the run rules in :core. */
+data class RunStateRow(
+    @ColumnInfo(name = "run_id") val runId: Long,
+    @ColumnInfo(name = "started_at") val startedAt: Long?,
+    @ColumnInfo(name = "ended_at") val endedAt: Long?,
+) {
+    fun toRow() = app.discoredact.core.selection.RunRow(runId, startedAt, endedAt)
+}
+
 /** A message row as the browser, the filters and the review read it (with its manual toggle, if any). */
 data class MessageRow(
     @ColumnInfo(name = "message_id") val messageId: Long,

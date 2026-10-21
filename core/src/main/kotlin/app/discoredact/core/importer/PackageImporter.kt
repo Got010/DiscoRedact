@@ -12,9 +12,9 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.decodeToSequence
 import java.io.FilterInputStream
-import java.io.IOException
 import java.io.InputStream
 import java.io.InputStreamReader
+import java.io.PushbackInputStream
 import java.util.zip.ZipInputStream
 
 /**
@@ -189,37 +189,60 @@ class PackageImporter(private val limits: ImportLimits = ImportLimits()) {
         fun row(id: String?, timestamp: String?, content: String?, hasAttachments: Boolean)
     }
 
+    /**
+     * Streams one messages.json. Only the decoder's own exceptions (bad JSON) mark the file malformed; an exception
+     * from the sink (a database write) or the stream (a broken ZIP) propagates and aborts the import.
+     */
     @OptIn(ExperimentalSerializationApi::class)
     private fun readMessagesJson(zip: ZipInputStream, handler: RowHandler): FileResult {
         var bad = 0L
-        return try {
-            val seq = json.decodeToSequence<JsonElement>(NonClosing(zip), DecodeSequenceMode.ARRAY_WRAPPED)
-            for (el in seq) {
-                val obj = el as? JsonObject
-                if (obj == null) {
-                    bad++
-                    continue
-                }
-                val id = primitiveText(field(obj, "ID"))
-                val ts = primitiveText(field(obj, "Timestamp"))
-                val contentEl = field(obj, "Contents")
-                val content = (contentEl as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content
-                if (content != null && content.length > limits.maxFieldChars) {
-                    bad++
-                    continue
-                }
-                if (id == null || Snowflake.parse(id) == null) {
-                    bad++
-                    continue
-                }
-                handler.row(id, ts, content, hasAttachments(field(obj, "Attachments")))
-            }
-            FileResult(true, bad)
-        } catch (e: IOException) {
-            throw e // a broken ZIP or a read error aborts the import; it is not a malformed row
-        } catch (_: Exception) {
-            FileResult(false, bad) // bad JSON: rows read so far stay, the rest of this file is skipped
+        val iterator = try {
+            json.decodeToSequence<JsonElement>(withoutBom(NonClosing(zip)), DecodeSequenceMode.ARRAY_WRAPPED).iterator()
+        } catch (_: IllegalArgumentException) {
+            return FileResult(false, bad) // SerializationException is an IllegalArgumentException
         }
+        while (true) {
+            val el = try {
+                if (!iterator.hasNext()) break
+                iterator.next()
+            } catch (_: IllegalArgumentException) {
+                return FileResult(false, bad) // bad JSON: rows read so far stay, the rest of this file is skipped
+            }
+            val obj = el as? JsonObject
+            if (obj == null) {
+                bad++
+                continue
+            }
+            val id = primitiveText(field(obj, "ID"))
+            val ts = primitiveText(field(obj, "Timestamp"))
+            val contentEl = field(obj, "Contents")
+            val content = (contentEl as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content
+            if (content != null && content.length > limits.maxFieldChars) {
+                bad++
+                continue
+            }
+            if (id == null || Snowflake.parse(id) == null) {
+                bad++
+                continue
+            }
+            handler.row(id, ts, content, hasAttachments(field(obj, "Attachments")))
+        }
+        return FileResult(true, bad)
+    }
+
+    /** Skips a UTF-8 byte-order mark at the start of a stream. */
+    private fun withoutBom(input: InputStream): InputStream {
+        val p = PushbackInputStream(input, 3)
+        val head = ByteArray(3)
+        var n = 0
+        while (n < 3) {
+            val r = p.read(head, n, 3 - n)
+            if (r < 0) break
+            n += r
+        }
+        val bom = n == 3 && head[0] == 0xEF.toByte() && head[1] == 0xBB.toByte() && head[2] == 0xBF.toByte()
+        if (!bom && n > 0) p.unread(head, 0, n)
+        return p
     }
 
     private fun readMessagesCsv(zip: ZipInputStream, handler: RowHandler): FileResult {
