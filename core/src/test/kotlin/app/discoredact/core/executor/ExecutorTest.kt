@@ -425,4 +425,36 @@ class ExecutorTest {
         assertEquals(5, transport.requests.map { it.messageId }.toSet().size)
         assertTrue(store.statuses().values.all { it == MessageStatus.DELETED })
     }
+
+    @Test fun theTripwireIsSeededFromTheEventLogAcrossSessions() {
+        store.channel(10, 1, 2, 3, 4, 5, 6)
+        store.freeze(1, 1, 2, 3, 4, 5, 6)
+        // Four invalid responses logged by an earlier session, three minutes ago.
+        repeat(4) { store.events.add(EventRecord(clock.nowMs() - 180_000, 1, 429, null, null, null, null, "RATE_LIMITED user")) }
+        transport.enqueue(Responses.rateLimited("user", 0.5))
+        val end = run() as SessionEnd.Halted
+        assertEquals(HaltReason.TRIPWIRE, end.reason)
+        assertEquals(1, transport.requests.size)
+        // Shared-scope limits logged earlier do not count.
+        val store2 = FakeStore().also { it.channel(1, 7, 8); it.freeze(1, 7, 8) }
+        repeat(10) { store2.events.add(EventRecord(clock.nowMs() - 60_000, 1, 429, null, null, null, null, "RATE_LIMITED shared")) }
+        val e = Executor(store2, FakeTransport(), creds, config, clock, sleeper, Random(1))
+        assertEquals(SessionEnd.Done, runBlocking { e.runSession(1, false, false) })
+    }
+
+    @Test fun aDryRunCanBePaused() {
+        store.channel(10, *LongArray(50) { it + 1L })
+        store.freeze(1, *LongArray(50) { it + 1L })
+        val e = executor(cs = EmptyCredentialStore)
+        runBlocking {
+            val job = launch {
+                e.runSession(1, true, false)
+            }
+            while (store.verdicts.size < 3) kotlinx.coroutines.yield()
+            job.cancel()
+            job.join()
+        }
+        assertTrue("stopped early: ${store.verdicts.size}", store.verdicts.size < 50)
+        assertNull(store.runs[1]!!.endedAt)
+    }
 }

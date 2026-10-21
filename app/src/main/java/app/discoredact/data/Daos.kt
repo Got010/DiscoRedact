@@ -162,14 +162,18 @@ interface RunDao {
     )
     fun nextCandidateNewestFirst(runId: Long, dryRun: Boolean): CandidateRow?
 
-    /** Channels in run order, the oldest message first within each (positions run newest first within a channel). */
+    /**
+     * Channels in run order, the oldest message first within each (positions run newest first within a channel). The
+     * channel rank is computed once per query in a derived table, not per row.
+     */
     @Query(
         "SELECT rm.message_id, rm.channel_id, rm.position FROM run_messages rm " +
+            "JOIN (SELECT channel_id, MIN(position) AS first_position FROM run_messages WHERE run_id = :runId GROUP BY channel_id) ch " +
+            "  ON ch.channel_id = rm.channel_id " +
             "JOIN messages m ON m.message_id = rm.message_id JOIN channels c ON c.channel_id = rm.channel_id " +
             "WHERE rm.run_id = :runId AND m.status = 'PENDING' AND m.keep = 0 AND c.state NOT IN ('GONE', 'INACCESSIBLE') " +
             "AND (:dryRun = 0 OR rm.message_id NOT IN (SELECT rr.message_id FROM run_results rr WHERE rr.run_id = :runId)) " +
-            "ORDER BY (SELECT MIN(r2.position) FROM run_messages r2 WHERE r2.run_id = rm.run_id AND r2.channel_id = rm.channel_id) ASC, " +
-            "rm.position DESC LIMIT 1",
+            "ORDER BY ch.first_position ASC, rm.position DESC LIMIT 1",
     )
     fun nextCandidateOldestFirst(runId: Long, dryRun: Boolean): CandidateRow?
 
@@ -207,17 +211,34 @@ interface RunDao {
     @Query("SELECT COUNT(*) FROM delete_log WHERE deleted_at >= :sinceMs")
     fun deletedSince(sinceMs: Long): Int
 
+    @Query(
+        "SELECT ts FROM events WHERE ts >= :sinceMs AND (http_status IN (401, 403) " +
+            "OR (http_status = 429 AND action_taken != 'RATE_LIMITED shared')) ORDER BY ts",
+    )
+    fun invalidResponseTimesSince(sinceMs: Long): List<Long>
+
     @Query("SELECT run_id, started_at, ended_at, stop_reason FROM runs WHERE run_id = :runId")
     fun snapshot(runId: Long): RunSnapshotRow?
 
-    @Query("UPDATE runs SET started_at = COALESCE(started_at, :now), stop_reason = NULL WHERE run_id = :runId")
+    // An ended run is never written again: a Stop that lands during a request keeps its "stopped".
+    @Query("UPDATE runs SET started_at = COALESCE(started_at, :now), stop_reason = NULL WHERE run_id = :runId AND ended_at IS NULL")
     fun runStarted(runId: Long, now: Long)
 
-    @Query("UPDATE runs SET ended_at = :now, stop_reason = :reason WHERE run_id = :runId")
+    @Query("UPDATE runs SET ended_at = :now, stop_reason = :reason WHERE run_id = :runId AND ended_at IS NULL")
     fun runEnded(runId: Long, now: Long, reason: String)
 
-    @Query("UPDATE runs SET stop_reason = :reason WHERE run_id = :runId")
+    @Query("UPDATE runs SET stop_reason = :reason WHERE run_id = :runId AND ended_at IS NULL")
     fun runStopReason(runId: Long, reason: String?)
+
+    /** The run that is started and not ended, if any: it must be stopped before another can start (brief decision 1). */
+    @Query("SELECT run_id FROM runs WHERE started_at IS NOT NULL AND ended_at IS NULL ORDER BY run_id DESC LIMIT 1")
+    fun observeOpenRunId(): Flow<Long?>
+
+    @Query("SELECT run_id FROM runs WHERE started_at IS NOT NULL AND ended_at IS NULL ORDER BY run_id DESC LIMIT 1")
+    suspend fun openRunId(): Long?
+
+    @Query("SELECT run_id FROM runs ORDER BY (ended_at IS NULL) DESC, (started_at IS NOT NULL) DESC, run_id DESC LIMIT 1")
+    suspend fun currentRunId(): Long?
 
     @Query("UPDATE run_options SET resume_not_before = :notBefore WHERE run_id = :runId")
     fun resumeNotBefore(runId: Long, notBefore: Long?)

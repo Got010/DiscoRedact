@@ -256,6 +256,10 @@ class Repository(private val db: AppDatabase, private val clock: () -> Long = Sy
     fun observeDeletedSince(sinceMs: Long) = runs.observeDeletedSince(sinceMs)
 
     fun runOptions(runId: Long): RunOptionsEntity? = runs.options(runId)
+    fun observeOpenRunId() = runs.observeOpenRunId()
+    suspend fun openRunId(): Long? = runs.openRunId()
+    suspend fun currentRunId(): Long? = runs.currentRunId()
+    fun runSnapshot(runId: Long): RunSnapshotRow? = runs.snapshot(runId)
 
     /** Records how a frozen run is to be executed, once: the first start writes it, a resume keeps it. */
     suspend fun prepareRun(runId: Long, dryRun: Boolean, oldestFirst: Boolean): RunOptionsEntity = db.withTransaction {

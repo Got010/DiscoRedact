@@ -61,6 +61,9 @@ interface RunStore {
     /** Real deletions recorded at or after [sinceMs]. */
     fun deletedSince(sinceMs: Long): Int
 
+    /** Timestamps of the invalid responses (401, 403, 429 not shared) logged at or after [sinceMs], to seed the tripwire. */
+    fun invalidResponseTimesSince(sinceMs: Long): List<Long>
+
     fun run(runId: Long): RunSnapshot?
 
     /** Sets `started_at` when it is null and clears a pause or halt reason. */
