@@ -7,6 +7,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -78,20 +79,37 @@ fun ChannelsScreen(vm: AppViewModel) {
         },
     ) { pad ->
         val list = summaries
+        Column(Modifier.padding(pad).fillMaxSize()) {
+            if (settings.importUnfinished && vm.importState !is ImportState.Running) {
+                Badge(
+                    text = "Last import did not finish; import the package again",
+                    container = MaterialTheme.colorScheme.errorContainer,
+                    content = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).clickable { vm.go(Route.Import) },
+                )
+            }
+            ChannelsBody(vm, list, settings.dryRun)
+        }
+    }
+}
+
+@Composable
+private fun ChannelsBody(vm: AppViewModel, list: List<ChannelSummary>?, dryRun: Boolean) {
+    Box(Modifier.fillMaxSize()) {
         when {
-            list == null -> Column(Modifier.padding(pad).fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+            list == null -> Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
                 CircularProgressIndicator(Modifier.padding(32.dp))
             }
-            list.isEmpty() -> Column(Modifier.padding(pad).padding(24.dp).fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            list.isEmpty() -> Column(Modifier.padding(24.dp).fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text("No data package imported yet.", style = MaterialTheme.typography.titleMedium)
                 Text("Pick the ZIP of your Discord data package. Only its messages folder is read; account, activity, servers and everything else are ignored.")
                 Button(onClick = { vm.go(Route.Import) }) { Text("Import data package") }
             }
-            else -> Column(Modifier.padding(pad).fillMaxSize()) {
+            else -> Column(Modifier.fillMaxSize()) {
                 val total = list.sumOf { it.willDelete }
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("${list.size} DMs, $total will delete", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                    DryRunBanner(settings.dryRun)
+                    DryRunBanner(dryRun)
                 }
                 Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton(onClick = { vm.setAllIncluded(true) }) { Text("Include all") }
