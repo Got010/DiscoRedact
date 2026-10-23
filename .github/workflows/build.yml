@@ -1,6 +1,28 @@
-# Build, test and gate the release APK (gate-baseline 5.1, 5.3, 5.4, 6). Milestone 1: no signing, no publishing.
-# The release APK is built unsigned; the gate compares it with gate/baseline.json. A test copy signed with a
-# throwaway key (made in this job, deleted after use, never a secret) is uploaded for the owner's phone checks only.
+# Build, test and gate the release APK, and publish it signed (gate-baseline 5.1, 5.2, 5.3, 5.4, 6).
+#
+# The release APK is built unsigned on every event; the gate compares it with gate/baseline.json. The build job also
+# rehearses the signing with a throwaway key made in the job (the pinned build-tools, the release's signature
+# schemes), and uploads that test copy for the owner's phone checks only.
+#
+# Only a push to main can sign or publish, and only for a VERSION that has no release yet (the VERSION file at the repo
+# root; bumping it is a release). Once a version is released, a merge that keeps it ends in plan with a notice and
+# publishes nothing; the merge that adds this release workflow (VERSION 0.1.0, no release yet) releases v0.1.0. The
+# jobs after the build, in order:
+#   plan           reads the build's version, decides whether it needs publishing; no checkout.
+#   sign           the only job that references a secret; environment publish (the owner approves). It checks out
+#                  nothing and runs no repository code: GitHub's own actions, gh and the runner's Android SDK tools.
+#   release-check  read-only; runs gate/gate.py cert --require-pin on the signed APK.
+#   publish        contents: write; environment publish (the owner approves); runs no repository code; creates the release.
+# No job that runs this repository's code (build, release-check) holds a writing token or references a secret.
+# Pull requests build unsigned and never reach plan, sign or publish.
+#
+# Environment publish (repository settings, created by the owner): required reviewer, deployment branches main only,
+# and these environment secrets, referenced by name in the sign job only:
+#   DISCOREDACT_KEYSTORE_BASE64    the PKCS12 release keystore, base64-encoded
+#   DISCOREDACT_KEYSTORE_PASSWORD  the keystore password
+#   DISCOREDACT_KEY_ALIAS          the key's alias
+#   DISCOREDACT_KEY_PASSWORD       the key's password
+
 name: build
 
 on:
@@ -28,6 +50,15 @@ env:
   GATE_CONFIGURATION: releaseRuntimeClasspath
   GRADLE_VERSION: "8.14.3"
   UNSIGNED_APK: app/build/outputs/apk/release/app-release-unsigned.apk
+  # The Android SDK build-tools that align, sign and verify the APK, by version, so the signing tools change only in a
+  # pull request. The build job's signing rehearsal fails if the runner lacks them; never "the newest directory".
+  BUILD_TOOLS_VERSION: "36.0.0"
+  # The signature schemes of the release: v2 only (minSdk 35 needs no v1; no v3 or v4). The rehearsal and the sign job
+  # sign with these flags and check apksigner's "Verified using" lines against them.
+  SIGNING_SCHEMES: "--v1-signing-enabled false --v2-signing-enabled true --v3-signing-enabled false --v4-signing-enabled false"
+  # The release keystore's type. A keystore made by JDK 17's keytool is PKCS12 whatever the file is called. apksigner
+  # reads a keystore only as the type it is told; the rehearsal makes its own keystore, so it cannot catch a mismatch.
+  KEYSTORE_TYPE: PKCS12
 
 jobs:
   build:
@@ -36,6 +67,9 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+      version: ${{ steps.version.outputs.version }}
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -50,6 +84,28 @@ jobs:
           path: .gate-base
           sparse-checkout: gate
           persist-credentials: false
+
+      - name: Record the built commit
+        id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Read VERSION
+        id: version
+        run: |
+          set -euo pipefail
+          if [ ! -f VERSION ]; then
+            echo "::error::VERSION is missing; it must hold one line, X.Y.Z"
+            exit 1
+          fi
+          shopt -s extglob
+          version=$(cat VERSION)
+          version=${version##+([[:space:]])}
+          version=${version%%+([[:space:]])}
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::VERSION must be X.Y.Z, found '$version'"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Use the runner's JDK 17
         run: |
@@ -122,7 +178,7 @@ jobs:
             echo "::error::$UNSIGNED_APK is missing (a build that signs would be noticed here)"
             exit 1
           fi
-          args=(check --require-tools --apk "$UNSIGNED_APK" --deps "$RUNNER_TEMP/gradle.log" --generated build/gate/baseline.generated.json)
+          args=(check --require-tools --require-pin --apk "$UNSIGNED_APK" --deps "$RUNNER_TEMP/gradle.log" --generated build/gate/baseline.generated.json)
           if [ "$EVENT" = pull_request ]; then
             args+=(--compare-to .gate-base/gate/baseline.json)
           fi
@@ -138,6 +194,27 @@ jobs:
           cat build/gate/baseline.generated.json
           echo "::endgroup::"
           gate/annotate-file.sh build/gate/baseline.generated.json baseline-generated 0
+
+      # So the baseline's host notes can name the library behind each URL literal (gate/baseline.json, hosts). Reads the
+      # dex files of the unsigned APK as data with the standard library only. A dex string is length-prefixed, so a
+      # run may start with one stray printable character (the length byte).
+      - name: Print the full URL literals in the dex
+        if: ${{ !cancelled() && hashFiles('app/build/outputs/apk/release/app-release-unsigned.apk') != '' }}
+        run: |
+          python3 -I - "$UNSIGNED_APK" <<'PY'
+          import re, sys, zipfile
+          runs = {}
+          with zipfile.ZipFile(sys.argv[1]) as apk:
+              for name in sorted(n for n in apk.namelist() if re.fullmatch(r"classes[0-9]*\.dex", n)):
+                  for m in re.finditer(rb"[\x20-\x7e]{3,}", apk.read(name)):
+                      if b"://" in m.group():
+                          runs.setdefault(m.group().decode("ascii"), set()).add(name)
+          print("::group::URL literals in the dex files (printable runs containing ://)")
+          for run in sorted(runs):
+              print(f"{', '.join(sorted(runs[run]))}: {run[:400]}")
+          print(f"{len(runs)} distinct run(s)")
+          print("::endgroup::")
+          PY
 
       - name: Print the written verification metadata (chunks 1-10)
         if: ${{ !cancelled() && steps.gradle.outputs.metadata == 'written' && hashFiles('gradle/verification-metadata.xml') != '' }}
@@ -159,28 +236,47 @@ jobs:
           path: gradle/verification-metadata.xml
           retention-days: 3
 
-      - name: Sign a test copy with a throwaway key (phone checks only, never published)
+      # Signing rehearsal (no secret): the same zipalign and apksigner commands as the sign job, with a throwaway key made
+      # here. It proves on every pull request that the pinned build-tools exist on the runner and that the flags give the
+      # release's schemes, because the sign job itself first runs after the merge. The result is also the test copy for
+      # the owner's phone checks (a different certificate from the release: never published).
+      - name: Signing rehearsal with a throwaway key (the test copy is for phone checks only, never published)
         id: testsign
         if: ${{ !cancelled() && steps.gate.outcome == 'success' }}
         env:
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          bt=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          tools="$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION"
+          if [ ! -x "$tools/apksigner" ] || [ ! -x "$tools/zipalign" ]; then
+            echo "::error::build-tools $BUILD_TOOLS_VERSION is not on this runner (has: $(ls "$ANDROID_HOME/build-tools" | tr '\n' ' ')). Update BUILD_TOOLS_VERSION."
+            exit 1
+          fi
           ks="$RUNNER_TEMP/throwaway.p12"
           trap 'rm -f "$ks"' EXIT
-          keytool -genkeypair -keystore "$ks" -storetype PKCS12 -storepass throwaway -keypass throwaway \
+          keytool -genkeypair -keystore "$ks" -storetype "$KEYSTORE_TYPE" -storepass throwaway -keypass throwaway \
             -alias test -keyalg RSA -keysize 3072 -validity 30 -dname "CN=DiscoRedact test build, O=not for release"
+          read -ra schemes <<< "$SIGNING_SCHEMES"
           mkdir -p build/test-apk
           out="build/test-apk/discoredact-${SHA:0:7}-test-key.apk"
-          "$bt/zipalign" -P 16 -f 4 "$UNSIGNED_APK" "$RUNNER_TEMP/aligned.apk"
-          "$bt/apksigner" sign --ks "$ks" --ks-type PKCS12 --ks-pass pass:throwaway --key-pass pass:throwaway \
-            --v1-signing-enabled false --v2-signing-enabled true --v3-signing-enabled false --v4-signing-enabled false \
+          "$tools/zipalign" -P 16 -f 4 "$UNSIGNED_APK" "$RUNNER_TEMP/aligned.apk"
+          "$tools/apksigner" sign --ks "$ks" --ks-type "$KEYSTORE_TYPE" --ks-key-alias test \
+            --ks-pass pass:throwaway --key-pass pass:throwaway "${schemes[@]}" \
             --out "$out" "$RUNNER_TEMP/aligned.apk"
           rm -f "$ks"
-          "$bt/zipalign" -c -P 16 4 "$out"
-          "$bt/apksigner" verify --print-certs -v "$out" | tee "$RUNNER_TEMP/verify.txt"
-          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" "$RUNNER_TEMP/verify.txt"
+          "$tools/zipalign" -c -P 16 4 "$out"
+          "$tools/apksigner" verify --print-certs -v "$out" | tee "$RUNNER_TEMP/verify.txt"
+          # The expected "Verified using" lines follow from SIGNING_SCHEMES; v3.1 needs key rotation, never here.
+          expected=$(xargs -n2 <<< "$SIGNING_SCHEMES" | sed -E 's/^--v([0-9]+)-signing-enabled (true|false)$/\1 \2/')
+          if [ "$(cut -d' ' -f1 <<< "$expected" | sort | tr '\n' ' ')" != "1 2 3 4 " ]; then
+            echo "::error::SIGNING_SCHEMES must set each of --v1/--v2/--v3/--v4-signing-enabled to true or false"
+            exit 1
+          fi
+          expected+=$'\n'"3.1 false"
+          while read -r v value; do
+            case "$v" in 1) name="v1 scheme (JAR signing)" ;; *) name="v$v scheme (APK Signature Scheme v$v)" ;; esac
+            grep -qxF "Verified using $name: $value" "$RUNNER_TEMP/verify.txt" || { echo "::error::Expected 'Verified using $name: $value'"; exit 1; }
+          done <<< "$expected"
           sha256sum "$out" "$UNSIGNED_APK"
 
       - name: Upload the APKs
@@ -226,3 +322,321 @@ jobs:
         run: |
           echo "::error::Generated files must be committed: verification metadata $METADATA, Room schema $SCHEMA (see the notices above)."
           exit 1
+
+  # Decides whether this push to main publishes: VERSION must have no release and no tag yet. No checkout, no
+  # repository code: the version comes from the build job's output and the rest is gh against the API.
+  plan:
+    name: plan
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      publish: ${{ steps.plan.outputs.publish }}
+      tag: ${{ steps.plan.outputs.tag }}
+    steps:
+      - name: Decide whether this version needs publishing
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::VERSION must be X.Y.Z, found '$VERSION'"
+            exit 1
+          fi
+          tag="v$VERSION"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+          # A release that exists ends the run quietly (a re-run of a published version, or a merge that did not bump
+          # VERSION). Any other failure of gh is an error, never "not released".
+          if out=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" 2>&1); then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$tag is already released, so nothing is published. Bump VERSION to publish a new release."
+            exit 0
+          fi
+          if ! grep -q 'release not found' <<< "$out"; then
+            echo "::error::Could not tell whether $tag is released: $out"
+            exit 1
+          fi
+          # A tag without a release is a half-finished or hand-made state: stop and let the owner look.
+          if out=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" 2>&1); then
+            echo "::error::The tag $tag exists but has no release. Nothing is published; the owner decides how to clear it."
+            exit 1
+          fi
+          if ! grep -q 'HTTP 404' <<< "$out"; then
+            echo "::error::Could not tell whether the tag $tag exists: $out"
+            exit 1
+          fi
+          # A version lower than the highest release is a mistake, not a release (100 is far more than this repo has).
+          list=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName --jq '.[].tagName')
+          existing=$(grep -E '^v[0-9]+\.[0-9]+\.[0-9]+' <<< "$list" || true)
+          highest=$( { printf '%s\n' "$existing"; echo "$tag"; } | sed '/^$/d' | sort -V | tail -n 1)
+          if [ "$highest" != "$tag" ]; then
+            echo "::error::VERSION $VERSION is lower than the highest release, $highest. Nothing is published."
+            exit 1
+          fi
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+          echo "::notice::$tag has no release or tag yet and is the highest version: it will be signed and published."
+
+  # Signs the release APK the build job built. The only job that references a secret, so it checks out nothing and
+  # runs no repository code: GitHub's own actions, gh and the runner's Android SDK tools. The secrets are environment
+  # secrets of publish (required reviewer, main only); the job waits for the owner's approval before it starts.
+  sign:
+    name: sign
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.plan.outputs.publish == 'true'
+    needs: [build, plan]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: publish
+    permissions:
+      contents: read
+    steps:
+      - name: Check the commit is on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ needs.build.outputs.sha }}
+        run: |
+          set -euo pipefail
+          main=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$main...$TARGET" --jq .status)
+          if [ "$status" != "identical" ] && [ "$status" != "behind" ]; then
+            echo "::error::$TARGET is not on main (compare status: $status), so it is not signed."
+            exit 1
+          fi
+
+      # The same JDK as the build job (the runner's own), for apksigner.
+      - name: Use the runner's JDK 17
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_17_X64/bin" >> "$GITHUB_PATH"
+
+      - name: Download the build's APKs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: apks
+          path: apks
+
+      - name: Sign the release APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.DISCOREDACT_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.DISCOREDACT_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.DISCOREDACT_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.DISCOREDACT_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          tools="$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION"
+          if [ ! -x "$tools/apksigner" ] || [ ! -x "$tools/zipalign" ]; then
+            echo "::error::build-tools $BUILD_TOOLS_VERSION is not on this runner."
+            exit 1
+          fi
+          mapfile -t found < <(find apks -name app-release-unsigned.apk)
+          if [ "${#found[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one app-release-unsigned.apk in the build job's apks artifact, found ${#found[@]}."
+            exit 1
+          fi
+          unsigned="${found[0]}"
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEYSTORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "::error::A signing secret is missing from environment publish (DISCOREDACT_KEYSTORE_BASE64, DISCOREDACT_KEYSTORE_PASSWORD, DISCOREDACT_KEY_ALIAS, DISCOREDACT_KEY_PASSWORD); nothing is published without them."
+            exit 1
+          fi
+          umask 077
+          keystore="$RUNNER_TEMP/release.p12"
+          trap 'rm -f "$keystore"' EXIT
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          unset KEYSTORE_BASE64
+          read -ra schemes <<< "$SIGNING_SCHEMES"
+          mkdir -p signed
+          "$tools/zipalign" -P 16 -f 4 "$unsigned" "$RUNNER_TEMP/aligned.apk"
+          "$tools/apksigner" sign --ks "$keystore" --ks-type "$KEYSTORE_TYPE" --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEY_PASSWORD "${schemes[@]}" \
+            --out signed/app-release.apk "$RUNNER_TEMP/aligned.apk"
+          rm -f "$keystore" "$RUNNER_TEMP/aligned.apk"
+          "$tools/zipalign" -c -P 16 4 signed/app-release.apk
+          "$tools/apksigner" verify --print-certs -v signed/app-release.apk | tee "$RUNNER_TEMP/verify.txt"
+          # The expected "Verified using" lines follow from SIGNING_SCHEMES; v3.1 needs key rotation, never here.
+          expected=$(xargs -n2 <<< "$SIGNING_SCHEMES" | sed -E 's/^--v([0-9]+)-signing-enabled (true|false)$/\1 \2/')
+          if [ "$(cut -d' ' -f1 <<< "$expected" | sort | tr '\n' ' ')" != "1 2 3 4 " ]; then
+            echo "::error::SIGNING_SCHEMES must set each of --v1/--v2/--v3/--v4-signing-enabled to true or false"
+            exit 1
+          fi
+          expected+=$'\n'"3.1 false"
+          while read -r v value; do
+            case "$v" in 1) name="v1 scheme (JAR signing)" ;; *) name="v$v scheme (APK Signature Scheme v$v)" ;; esac
+            grep -qxF "Verified using $name: $value" "$RUNNER_TEMP/verify.txt" || { echo "::error::Expected 'Verified using $name: $value'"; exit 1; }
+          done <<< "$expected"
+
+      - name: Remove the keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.p12" "$RUNNER_TEMP/aligned.apk"
+
+      - name: Upload the signed APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signed-apk
+          path: signed/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  # Read-only checks before publishing: the commit is on main, and the APK is signed by the pinned certificate. It
+  # runs the repository's gate/ script, so it lives in a job without a writing token and without secrets; publish
+  # below runs no repository code.
+  release-check:
+    name: release-check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.plan.outputs.publish == 'true'
+    needs: [build, plan, sign]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      apk_sha256: ${{ steps.cert.outputs.apk_sha256 }}
+    steps:
+      # Only the gate files of the commit the APK was built from: the baseline and the script.
+      - name: Check out the gate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+          persist-credentials: false
+          sparse-checkout: gate
+
+      - name: Use the runner's JDK 17
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_17_X64/bin" >> "$GITHUB_PATH"
+
+      - name: Download the signed APK
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: signed-apk
+          path: apks
+
+      - name: Check the commit is on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ needs.build.outputs.sha }}
+        run: |
+          set -euo pipefail
+          main=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/$main...$TARGET" --jq .status)
+          if [ "$status" != "identical" ] && [ "$status" != "behind" ]; then
+            echo "::error::$TARGET is not on main (compare status: $status), so it is not published."
+            exit 1
+          fi
+
+      # Fails on an unsigned APK, a certificate other than the one pinned in gate/baseline.json, or no pin at all, so a
+      # build signed with a different key is never offered as an update.
+      - name: Check the signing certificate against gate/baseline.json
+        id: cert
+        run: |
+          set -euo pipefail
+          mapfile -t found < <(find apks -name app-release.apk)
+          if [ "${#found[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one app-release.apk in the sign job's signed-apk artifact, found ${#found[@]}."
+            exit 1
+          fi
+          # gate.py takes the apksigner named by APKSIGNER; without it, it would use the newest build-tools directory.
+          APKSIGNER="$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner"
+          if [ ! -x "$APKSIGNER" ]; then
+            echo "::error::$APKSIGNER is not on this runner (BUILD_TOOLS_VERSION $BUILD_TOOLS_VERSION)."
+            exit 1
+          fi
+          export APKSIGNER
+          python3 gate/gate.py cert --require-pin --apk "${found[0]}"
+          echo "apk_sha256=$(sha256sum "${found[0]}" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+  # Creates the release v<VERSION> with the APK release-check checked: no checkout, no repository code, only the
+  # signed APK as data for the SDK tools. The tag is created here by gh release create; nothing else makes it. There
+  # is no --clobber path: a published version is never replaced, and a re-run ends in plan.
+  publish:
+    name: publish
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.plan.outputs.publish == 'true'
+    needs: [build, plan, release-check]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # The writing job waits for the owner's approval too; GitHub asks once per job, so a release asks twice.
+    environment: publish
+    permissions:
+      contents: write # creates the release and uploads the APK
+    steps:
+      - name: Use the runner's JDK 17
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_17_X64/bin" >> "$GITHUB_PATH"
+
+      - name: Download the signed APK
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: signed-apk
+          path: apks
+
+      # Publishes exactly the APK release-check checked.
+      - name: Check the APK is the one that was checked
+        env:
+          CHECKED: ${{ needs.release-check.outputs.apk_sha256 }}
+        run: |
+          set -euo pipefail
+          mapfile -t found < <(find apks -name app-release.apk)
+          if [ "${#found[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one app-release.apk in the sign job's signed-apk artifact, found ${#found[@]}."
+            exit 1
+          fi
+          actual=$(sha256sum "${found[0]}" | cut -d' ' -f1)
+          if [ -z "$CHECKED" ] || [ "$actual" != "$CHECKED" ]; then
+            echo "::error::${found[0]} ($actual) is not the APK release-check checked ($CHECKED)"
+            exit 1
+          fi
+
+      - name: Publish the signed APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          TARGET: ${{ needs.build.outputs.sha }}
+        run: |
+          set -euo pipefail
+          tools="$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION"
+          apk=$(find apks -name app-release.apk)
+          "$tools/apksigner" verify "$apk"
+          badging=$("$tools/aapt2" dump badging "$apk")
+          package=$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<< "$badging" | head -n 1)
+          version=$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<< "$badging" | head -n 1)
+          if [ "$package" != "app.discoredact" ]; then
+            echo "::error::The APK's package is '$package', not app.discoredact"
+            exit 1
+          fi
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::The APK's versionName ($version) does not match the release $TAG"
+            exit 1
+          fi
+
+          out="discoredact-$TAG.apk"
+          cp "$apk" "$out"
+          apk_sha=$(sha256sum "$out" | cut -d' ' -f1)
+          cert_sha=$("$tools/apksigner" verify --print-certs "$out" | sed -n 's/.*certificate SHA-256 digest: //p' | head -n 1)
+          cat > notes.md <<EOF
+          Signed release build of DiscoRedact $TAG from commit $TARGET.
+
+          - APK SHA-256: \`$apk_sha\`
+          - Signing certificate SHA-256: \`$cert_sha\`
+
+          Install: download \`$out\` on the phone and open it (allow "Install unknown apps" for the browser or Files
+          app once). It installs over an earlier build signed with the same key. A build signed with a test key must be
+          uninstalled first.
+          EOF
+
+          # The approval waits can take hours: if the tag appeared meanwhile, gh would attach the release to it and
+          # ignore --target, so it must still be absent (HTTP 404) right before the release is created.
+          if tagout=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" 2>&1); then
+            echo "::error::The tag $TAG now exists, so the release is not created. The owner decides how to clear it."
+            exit 1
+          fi
+          if ! grep -q 'HTTP 404' <<< "$tagout"; then
+            echo "::error::Could not tell whether the tag $TAG exists: $tagout"
+            exit 1
+          fi
+          # No --prerelease or --latest=false: plan only lets a strict X.Y.Z through, and only the highest version.
+          gh release create "$TAG" "$out" --repo "$GITHUB_REPOSITORY" --target "$TARGET" \
+            --title "DiscoRedact $TAG" --notes-file notes.md

@@ -7,6 +7,22 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+// VERSION at the repo root is the one source of the app's version. A change to it is a release: the next merge to
+// main publishes it (.github/workflows/build.yml). versionCode = major * 1_000_000 + minor * 1_000 + patch, so
+// minor and patch stay below 1000 and the code rises with every version (0.1.0 is 1000).
+val versionFile = rootProject.file("VERSION")
+if (!versionFile.isFile) {
+    throw GradleException("VERSION is missing (expected ${versionFile.path}); it must hold one line, X.Y.Z, such as 0.1.0")
+}
+val versionText = versionFile.readText().trim()
+val versionParts = Regex("([0-9]+)\\.([0-9]+)\\.([0-9]+)").matchEntire(versionText)
+    ?.destructured?.toList()?.map { it.toIntOrNull() ?: Int.MAX_VALUE }
+    ?: throw GradleException("VERSION must be X.Y.Z, digits only; found '$versionText'")
+val (versionMajor, versionMinor, versionPatch) = versionParts
+if (versionMajor > 2000 || versionMinor > 999 || versionPatch > 999) {
+    throw GradleException("VERSION $versionText is out of range: major at most 2000, minor and patch at most 999")
+}
+
 android {
     namespace = "app.discoredact"
     compileSdk = 36
@@ -15,8 +31,8 @@ android {
         applicationId = "app.discoredact"
         minSdk = 35
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = versionMajor * 1_000_000 + versionMinor * 1_000 + versionPatch
+        versionName = versionText
     }
 
     buildTypes {

@@ -1,6 +1,7 @@
 package app.discoredact.ui
 
 import android.app.Application
+import android.app.NotificationManager
 import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -15,7 +16,11 @@ import app.discoredact.core.pacing.PacingPreset
 import app.discoredact.core.pacing.QuietHours
 import app.discoredact.core.selection.DeletePlan
 import app.discoredact.core.selection.MessageFilter
-import app.discoredact.core.executor.CredentialStatus
+import app.discoredact.core.selection.StartDecision
+import app.discoredact.core.selection.StartRefusal
+import app.discoredact.core.selection.StartRules
+import app.discoredact.core.report.LeftoversCsv
+import app.discoredact.core.executor.CredentialState
 import app.discoredact.core.executor.CurlParser
 import app.discoredact.core.executor.Executor
 import app.discoredact.core.executor.HeaderSet
@@ -28,6 +33,9 @@ import app.discoredact.data.ImportState
 import app.discoredact.data.MessageRow
 import app.discoredact.data.Repository
 import app.discoredact.data.RunChannelLine
+import app.discoredact.data.RunOptionsEntity
+import app.discoredact.data.RunReport
+import app.discoredact.data.StatusCount
 import app.discoredact.data.RunProgress
 import app.discoredact.work.RunScheduler
 import kotlinx.coroutines.flow.flowOf
@@ -40,8 +48,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -58,6 +68,7 @@ sealed interface Route {
     data object Settings : Route
     data object Run : Route
     data object Credentials : Route
+    data object Reports : Route
 }
 
 /** Loads a long list a page at a time (no Paging dependency). Pages load off the main thread. */
@@ -185,16 +196,66 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** A message for the Run screen. */
     var runNotice by mutableStateOf<String?>(null)
 
+    // ---- Reports (M4): read only while the Reports screen is on screen (WhileSubscribed), so a run's writes do not ----
+    // ---- re-run these queries when nobody is looking. ------------------------------------------------------------
+
+    private val whileShown = SharingStarted.WhileSubscribed(5_000)
+    val statusCounts: StateFlow<List<StatusCount>?> =
+        generation.flatMapLatest { repo.observeStatusCounts() }.stateIn(viewModelScope, whileShown, null)
+    val keptCount: StateFlow<Int> =
+        generation.flatMapLatest { repo.observeKeptCount() }.stateIn(viewModelScope, whileShown, 0)
+    val leftoverCount: StateFlow<Int> =
+        generation.flatMapLatest { repo.observeLeftoverCount() }.stateIn(viewModelScope, whileShown, 0)
+    val reportRuns: StateFlow<List<RunReport>?> =
+        generation.flatMapLatest { repo.observeRunReports() }.stateIn(viewModelScope, whileShown, null)
+
+    /** A run's per-channel lines, for an expanded row of the Reports screen. */
+    fun observeRunChannelLines(runId: Long) = generation.flatMapLatest { repo.observeChannelLines(runId) }
+
+    /** "Exported N rows", or the failure's class name. */
+    var reportNotice by mutableStateOf<String?>(null)
+    var exporting by mutableStateOf(false)
+        private set
+
+    /**
+     * Writes the leftovers (channel_id,message_id and nothing else) to the file the user picked through the system's
+     * file picker. Read and written off the main thread; a failure is reported by class name only.
+     */
+    fun exportLeftovers(uri: Uri) {
+        if (wiping || exporting) return
+        exporting = true
+        reportNotice = null
+        val resolver = getApplication<Application>().contentResolver
+        viewModelScope.launch {
+            try {
+                val count = withContext(Dispatchers.IO) {
+                    val pairs = repo.leftovers().map { it.channelId to it.messageId }
+                    val out = resolver.openOutputStream(uri, "wt") ?: throw IOException("the file could not be opened")
+                    out.use { it.write(LeftoversCsv.toBytes(pairs)) }
+                    pairs.size
+                }
+                reportNotice = "Exported $count rows"
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                reportNotice = "Export failed: ${e.javaClass.simpleName}"
+            } finally {
+                exporting = false
+            }
+        }
+    }
+
     // ---- Credentials (M3): the status only, never a value. ------------------------------------------------------
 
-    var credentialStatus by mutableStateOf<CredentialStatus?>(null)
+    /** Null until the first read; then None, Unreadable or Present (a capture time and an age). */
+    var credentialState by mutableStateOf<CredentialState?>(null)
         private set
     var credentialNotice by mutableStateOf<String?>(null)
     var credentialsBusy by mutableStateOf(false)
         private set
 
     fun refreshCredentialStatus() {
-        viewModelScope.launch { credentialStatus = withContext(Dispatchers.IO) { graph.credentialStore.status() } }
+        viewModelScope.launch { credentialState = withContext(Dispatchers.IO) { graph.credentialStore.status() } }
     }
 
     /** Parses a "Copy as cURL" text (or a pasted headers panel) and stores the five headers. The text is not kept. */
@@ -239,8 +300,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun wipeCredentials() {
         viewModelScope.launch {
-            withContext(Dispatchers.IO) { graph.credentialStore.wipe() }
-            credentialNotice = "Credentials wiped from this phone. Log out of the browser session too; that invalidates the token."
+            val removed = withContext(Dispatchers.IO) { graph.credentialStore.wipe() }
+            credentialNotice =
+                if (removed) "Credentials wiped from this phone. Log out of the browser session too; that invalidates the token."
+                else "Could not remove everything. Try again, or uninstall the app to remove its data."
             refreshCredentialStatus()
         }
     }
@@ -264,9 +327,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** A message for the Settings screen (a failed wipe). */
     var settingsNotice by mutableStateOf<String?>(null)
 
+    /** True while the run worker is running (mirrors [workState] into Compose state, so the Settings buttons follow it). */
+    private var workerRunning by mutableStateOf(false)
+
     /** Something is writing to the database: Wipe and Purge wait until it is done. */
     val busy: Boolean
-        get() = wiping || importState is ImportState.Running || filters?.applying == true || review.freezing
+        get() = wiping || importState is ImportState.Running || filters?.applying == true || review.freezing || workerRunning || exporting
+
+    /** The line under the disabled Purge and Wipe buttons; [runId] is the run to name if the worker is running. */
+    fun busyNotice(runId: Long?): String? =
+        if (wiping) "Wiping..." else WipeGate.busyNotice(importState is ImportState.Running, filters?.applying == true, review.freezing, workerRunning, runId, exporting)
 
     // ---- Navigation ---------------------------------------------------------------------------------------------
 
@@ -276,6 +346,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             is Route.Filters -> filters = FilterState(route.channelId).also { schedulePreview(it) }
             Route.Review -> startReview()
             Route.Credentials -> { credentialNotice = null; refreshCredentialStatus() }
+            Route.Settings -> refreshCredentialStatus()
+            Route.Reports -> reportNotice = null
             is Route.Frozen -> refreshCredentialStatus()
             else -> Unit
         }
@@ -297,6 +369,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         viewModelScope.launch { graph.imports.state.collect { importState = it } }
+        viewModelScope.launch { workState.collect { workerRunning = it == RunScheduler.WorkState.RUNNING } }
     }
 
     /**
@@ -458,14 +531,40 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Deletes the database and settings. The import is cancelled and joined first, and a running filter apply or
-     * freeze is joined, so no write can overlap the delete; nothing new starts while [wiping] is set.
+     * Wipes the database, the settings and the stored credentials. In this order, each step before the next:
+     *  0. an open run is marked Paused, so a refused wipe leaves it reading "Paused";
+     *  1. the run worker is cancelled and WorkManager is asked until it reports nothing active (at most
+     *     [WipeGate.WORKER_WAIT_MS]); if one is still active the wipe is refused and nothing is touched;
+     *  2. the worker mutex (held by the worker for its whole body) and the send lock are taken by polling tryLock (same limit);
+     *  3. the import is cancelled and joined, and a running filter apply or freeze is joined;
+     *  4. the files are deleted; 5. WorkManager's finished-work records are pruned and the notifications cleared.
+     * Nothing new starts while [wiping] is set.
      */
     fun wipeEverything() {
         if (wiping) return
         wiping = true
         viewModelScope.launch {
+            var workerLocked = false
+            var sendLocked = false
             try {
+                // An open run reads "Paused" if the wipe is refused, not "interrupted".
+                withContext(Dispatchers.IO) { repo.openRunId()?.let { repo.pauseRun(it) } }
+                val refusal = cancelWorkerAndWait()
+                if (refusal != null) {
+                    settingsNotice = refusal
+                    return@launch
+                }
+                // WorkManager calls a cancelled worker finished before its coroutine has stopped: wait for its real end.
+                workerLocked = lockWithin(graph.workerMutex)
+                if (!workerLocked) {
+                    settingsNotice = WipeGate.STILL_WRITING
+                    return@launch
+                }
+                sendLocked = lockWithin(graph.sendMutex)
+                if (!sendLocked) {
+                    settingsNotice = WipeGate.STILL_WRITING
+                    return@launch
+                }
                 previewJob?.cancel()
                 graph.imports.stopAndJoin()
                 filterJob?.join()
@@ -476,13 +575,51 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 browser = null
                 filters = null
                 settingsNotice = null
+                reportNotice = null
+                runNotice = null
+                credentialNotice = null
+                refreshCredentialStatus()
+                // After the wipe, no record of a run (WorkManager's own) and no notification naming one stays behind.
+                withContext(Dispatchers.IO) {
+                    runCatching { scheduler.prune() }
+                    runCatching { getApplication<Application>().getSystemService(NotificationManager::class.java).cancelAll() }
+                }
                 home()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 settingsNotice = "Wipe failed: ${e.javaClass.simpleName}${e.message?.let { ": $it" } ?: ""}. Try again, or uninstall the app to remove its data."
             } finally {
+                if (sendLocked) graph.sendMutex.unlock()
+                if (workerLocked) graph.workerMutex.unlock()
                 wiping = false
+            }
+        }
+    }
+
+    /**
+     * Takes [mutex] by polling `tryLock()` until the wipe's deadline. Never a timeout around `lock()`: a timeout can
+     * fire after the lock was taken and leave it held for good.
+     */
+    private suspend fun lockWithin(mutex: Mutex): Boolean {
+        val start = System.currentTimeMillis()
+        while (true) {
+            if (mutex.tryLock()) return true
+            if (WipeGate.decide(true, System.currentTimeMillis() - start) is WipeGate.Decision.Refuse) return false
+            delay(250)
+        }
+    }
+
+    /** Cancels the run worker and waits for WorkManager to report none enqueued or running; a refusal text, or null when clear. */
+    private suspend fun cancelWorkerAndWait(): String? {
+        scheduler.cancel()
+        val start = System.currentTimeMillis()
+        while (true) {
+            val active = scheduler.observeActive().first() != RunScheduler.WorkState.NONE
+            when (val d = WipeGate.decide(active, System.currentTimeMillis() - start)) {
+                WipeGate.Decision.Ready -> return null
+                WipeGate.Decision.WaitForWorker -> delay(250)
+                is WipeGate.Decision.Refuse -> return d.reason
             }
         }
     }
@@ -491,36 +628,58 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setOldestFirst(on: Boolean) = graph.settings.update { it.copy(oldestFirst = on) }
 
+    /** What [StartRules] needs, read off the main thread. The header set is only tested for presence, never kept. */
+    private class StartFacts(val openRunId: Long?, val startedAt: Long?, val options: RunOptionsEntity?, val hasHeaders: Boolean)
+
+    private suspend fun startFacts(runId: Long) = withContext(Dispatchers.IO) {
+        StartFacts(repo.openRunId(), repo.runSnapshot(runId)?.startedAt, repo.runOptions(runId), graph.credentials.load() != null)
+    }
+
+    private fun refusalText(r: StartDecision.Refuse): String = when (r.reason) {
+        StartRefusal.OTHER_RUN_OPEN -> "Run #${r.openRunId} is still open. Stop it (or let it finish) before starting another."
+        StartRefusal.HELD -> "Not before ${formatTime(r.notBefore ?: 0L)}."
+        StartRefusal.NO_CREDENTIALS_START ->
+            "No credentials stored, so a real run cannot start. Import them on the Credentials screen (Settings), or switch Dry run on. Nothing was started."
+        StartRefusal.NO_CREDENTIALS_RESUME ->
+            "No credentials stored, so this real run cannot continue. Import them on the Credentials screen (Settings). Nothing was started."
+    }
+
+    /** Hands a run that has options to the worker with them. Nothing starts once a wipe has begun. */
+    private fun continueRun(runId: Long, options: RunOptionsEntity?) {
+        if (options == null) {
+            runNotice = "This run was never started; start it from its frozen screen."
+            return
+        }
+        if (wiping) return
+        scheduler.start(runId, options.dryRun)
+        runNotice = null
+    }
+
     /**
      * Starts a frozen run as a dry run or a real one, per the Dry run toggle at this moment. The choice is written to
-     * the run once; a later resume keeps it. A real run with no stored credentials pauses at once (milestone 3).
+     * the run once; a later resume keeps it. The decision (an open run first, credentials for a real run, the hold
+     * after an edge block) is [StartRules.decide], tested on the JVM.
      */
     fun startRun(runId: Long) {
         if (wiping) return
         val s = settings.value
         viewModelScope.launch {
             try {
-                // An interrupted, paused, halted or waiting run comes first (brief decision 1): Stop it to start another.
-                val open = withContext(Dispatchers.IO) { repo.openRunId() }
-                if (open != null && open != runId) {
-                    runNotice = "Run #$open is still open. Stop it (or let it finish) before starting another."
-                    return@launch
+                val f = startFacts(runId)
+                // Once a run has options, its stored mode counts; the toggle only decides for a run with none yet.
+                val dryRun = f.options?.dryRun ?: s.dryRun
+                when (val d = StartRules.decide(runId, f.openRunId, f.startedAt, dryRun, f.hasHeaders, f.options?.resumeNotBefore, System.currentTimeMillis())) {
+                    is StartDecision.Refuse -> { runNotice = refusalText(d) }
+                    StartDecision.Resume -> continueRun(runId, f.options)
+                    StartDecision.Start -> {
+                        val options = withContext(Dispatchers.IO) { repo.prepareRun(runId, s.dryRun, s.oldestFirst) }
+                        if (wiping) return@launch
+                        scheduler.start(runId, options.dryRun)
+                        runNotice = null
+                        backStack.removeAt(backStack.lastIndex)
+                        backStack.add(Route.Run)
+                    }
                 }
-                // A run that has already started is resumed, never started again (the hold after an edge block applies).
-                if (withContext(Dispatchers.IO) { repo.runSnapshot(runId)?.startedAt } != null) {
-                    resumeRun(runId)
-                    return@launch
-                }
-                // A real run needs a complete header set; without one nothing starts (brief decision 5).
-                if (!s.dryRun && withContext(Dispatchers.IO) { graph.credentials.load() } == null) {
-                    runNotice = "No credentials stored, so a real run cannot start. Import them on the Credentials screen (Settings), or switch Dry run on. Nothing was started."
-                    return@launch
-                }
-                val options = withContext(Dispatchers.IO) { repo.prepareRun(runId, s.dryRun, s.oldestFirst) }
-                scheduler.start(runId, options.dryRun)
-                runNotice = null
-                backStack.removeAt(backStack.lastIndex)
-                backStack.add(Route.Run)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -533,22 +692,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun resumeRun(runId: Long) {
         if (wiping) return
         viewModelScope.launch {
-            val options = withContext(Dispatchers.IO) { repo.runOptions(runId) }
-            if (options == null) {
-                runNotice = "This run was never started; start it from its frozen screen."
-                return@launch
+            try {
+                val f = startFacts(runId)
+                val options = f.options
+                if (options == null) {
+                    runNotice = "This run was never started; start it from its frozen screen."
+                    return@launch
+                }
+                when (val d = StartRules.decide(runId, f.openRunId, f.startedAt, options.dryRun, f.hasHeaders, options.resumeNotBefore, System.currentTimeMillis())) {
+                    is StartDecision.Refuse -> { runNotice = refusalText(d) }
+                    StartDecision.Resume, StartDecision.Start -> continueRun(runId, options)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                runNotice = "Could not resume: ${e.javaClass.simpleName}${e.message?.let { ": $it" } ?: ""}"
             }
-            val hold = options.resumeNotBefore
-            if (hold != null && hold > System.currentTimeMillis()) {
-                runNotice = "Not before ${formatTime(hold)}."
-                return@launch
-            }
-            if (!options.dryRun && withContext(Dispatchers.IO) { graph.credentials.load() } == null) {
-                runNotice = "No credentials stored, so this real run cannot continue. Import them on the Credentials screen (Settings). Nothing was started."
-                return@launch
-            }
-            scheduler.start(runId, options.dryRun)
-            runNotice = null
         }
     }
 
@@ -569,6 +728,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * continues now if its time has come. A foreground service can only start while the app is in front.
      */
     fun onAppForeground() {
+        if (wiping) return
         viewModelScope.launch {
             // Read the rows directly: on a cold open the observed flows have not emitted yet.
             val resume = withContext(Dispatchers.IO) {
@@ -581,6 +741,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (!options.dryRun && graph.credentials.load() == null) return@withContext null
                 id to options.dryRun
             } ?: return@launch
+            if (wiping) return@launch
             scheduler.start(resume.first, resume.second)
         }
     }

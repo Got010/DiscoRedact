@@ -44,9 +44,9 @@ executor rules; 11-20 are the owner's program-wide rules. Changing any rule here
     phone steps (or waived them). A hotfix for a defect the owner reported counts as the round's merge.
 16. **Fix what changed before cutting features.** When something breaks right after a change, repair that path first;
     removing a capability is a last resort, offered only as a trade-off that states what is lost.
-17. **No AI attribution in anything new.** Commits are authored `Builder <builder@localhost>` with no `Co-Authored-By`
-    trailer, no session link and no model name; PR text, comments and code carry no "Generated with" footer. This
-    overrides any attribution the tooling suggests.
+17. **No AI attribution in anything new.** Commits are authored `Got010 <346092880+Got010@users.noreply.github.com>`
+    with no `Co-Authored-By` trailer, no session link and no model name; PR text, comments and code carry no
+    "Generated with" footer. This overrides any attribution the tooling suggests.
 18. **Android code compiles only in CI.** Logic goes in plain-Kotlin modules with JVM tests (parser, selection, pacing,
     response handling, executor state machine); the `:app` module holds Compose, Room and WorkManager glue.
 19. **Fail closed; data survives upgrades.** A privacy step that fails stops the action and tells the user before, not

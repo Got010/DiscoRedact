@@ -28,6 +28,32 @@ private const val ROW_SELECT = """
     FROM messages m LEFT JOIN selection_overrides o ON o.message_id = m.message_id
 """
 
+/**
+ * The leftovers (spec section 10): messages the app tried and could not delete. Never a message marked Keep, whatever
+ * its status. Either still pending in a channel the alt can no longer reach AND in a frozen run (a message RJ never put
+ * in a run was never attempted, so it is not listed), or refused by Discord (FAILED, which only a send produces).
+ * Expects `messages m` joined to `channels c`.
+ */
+private const val LEFTOVER_WHERE = """
+    m.keep = 0 AND ((m.status = 'PENDING' AND c.state IN ('INACCESSIBLE', 'GONE') AND EXISTS (SELECT 1 FROM run_messages rm WHERE rm.message_id = m.message_id)) OR m.status = 'FAILED')
+"""
+
+/** Every run with the counts of its frozen set; [PROGRESS_SELECT] is the one definition behind the Run screen and the Reports. */
+private const val PROGRESS_SELECT =
+    "SELECT r.run_id, r.started_at, r.ended_at, r.deleted_count, r.stop_reason, o.dry_run, o.oldest_first, o.resume_not_before, " +
+        "(SELECT COUNT(*) FROM run_messages rm WHERE rm.run_id = r.run_id) AS total, " +
+        "(SELECT COUNT(*) FROM run_messages rm JOIN messages m ON m.message_id = rm.message_id WHERE rm.run_id = r.run_id AND m.status = 'DELETED') AS deleted, " +
+        "(SELECT COUNT(*) FROM run_messages rm JOIN messages m ON m.message_id = rm.message_id WHERE rm.run_id = r.run_id AND m.status = 'ALREADY_GONE') AS already_gone, " +
+        "(SELECT COUNT(*) FROM run_messages rm JOIN messages m ON m.message_id = rm.message_id WHERE rm.run_id = r.run_id AND m.status = 'SKIPPED_SYSTEM') AS skipped_system, " +
+        "(SELECT COUNT(*) FROM run_messages rm JOIN messages m ON m.message_id = rm.message_id WHERE rm.run_id = r.run_id AND m.status = 'FAILED') AS failed, " +
+        "(SELECT COUNT(*) FROM run_messages rm JOIN messages m ON m.message_id = rm.message_id JOIN channels c ON c.channel_id = rm.channel_id " +
+        "  WHERE rm.run_id = r.run_id AND m.status = 'PENDING' AND m.keep = 0 AND c.state NOT IN ('GONE', 'INACCESSIBLE')) AS pending, " +
+        "(SELECT COUNT(*) FROM run_messages rm JOIN messages m ON m.message_id = rm.message_id JOIN channels c ON c.channel_id = rm.channel_id " +
+        "  WHERE rm.run_id = r.run_id AND m.status = 'PENDING' AND (m.keep = 1 OR c.state IN ('GONE', 'INACCESSIBLE'))) AS blocked, " +
+        "(SELECT COUNT(*) FROM run_results rr WHERE rr.run_id = r.run_id AND rr.verdict = 'WOULD_DELETE') AS dry_would_delete, " +
+        "(SELECT COUNT(DISTINCT rm.channel_id) FROM run_messages rm WHERE rm.run_id = r.run_id) AS channels " +
+        "FROM runs r LEFT JOIN run_options o ON o.run_id = r.run_id "
+
 @Dao
 interface ChannelDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
@@ -119,6 +145,20 @@ interface MessageDao {
 
     @Query("SELECT COUNT(*) FROM messages WHERE content IS NOT NULL")
     fun observeContentCount(): Flow<Int>
+
+    // ---- Reports and the leftovers export -------------------------------------------------------------------------
+
+    @Query("SELECT status, COUNT(*) AS n FROM messages GROUP BY status")
+    fun observeStatusCounts(): Flow<List<StatusCount>>
+
+    @Query("SELECT COUNT(*) FROM messages WHERE keep = 1")
+    fun observeKeptCount(): Flow<Int>
+
+    @Query("SELECT m.channel_id, m.message_id FROM messages m JOIN channels c ON c.channel_id = m.channel_id WHERE $LEFTOVER_WHERE ORDER BY m.channel_id, m.message_id")
+    suspend fun leftovers(): List<LeftoverRow>
+
+    @Query("SELECT COUNT(*) FROM messages m JOIN channels c ON c.channel_id = m.channel_id WHERE $LEFTOVER_WHERE")
+    fun observeLeftoverCount(): Flow<Int>
 }
 
 @Dao
@@ -251,21 +291,7 @@ interface RunDao {
     )
     fun observeCurrentRunId(): Flow<Long?>
 
-    @Query(
-        "SELECT r.run_id, r.started_at, r.ended_at, r.deleted_count, r.stop_reason, o.dry_run, o.oldest_first, o.resume_not_before, " +
-            "(SELECT COUNT(*) FROM run_messages rm WHERE rm.run_id = r.run_id) AS total, " +
-            "(SELECT COUNT(*) FROM run_messages rm JOIN messages m ON m.message_id = rm.message_id WHERE rm.run_id = r.run_id AND m.status = 'DELETED') AS deleted, " +
-            "(SELECT COUNT(*) FROM run_messages rm JOIN messages m ON m.message_id = rm.message_id WHERE rm.run_id = r.run_id AND m.status = 'ALREADY_GONE') AS already_gone, " +
-            "(SELECT COUNT(*) FROM run_messages rm JOIN messages m ON m.message_id = rm.message_id WHERE rm.run_id = r.run_id AND m.status = 'SKIPPED_SYSTEM') AS skipped_system, " +
-            "(SELECT COUNT(*) FROM run_messages rm JOIN messages m ON m.message_id = rm.message_id WHERE rm.run_id = r.run_id AND m.status = 'FAILED') AS failed, " +
-            "(SELECT COUNT(*) FROM run_messages rm JOIN messages m ON m.message_id = rm.message_id JOIN channels c ON c.channel_id = rm.channel_id " +
-            "  WHERE rm.run_id = r.run_id AND m.status = 'PENDING' AND m.keep = 0 AND c.state NOT IN ('GONE', 'INACCESSIBLE')) AS pending, " +
-            "(SELECT COUNT(*) FROM run_messages rm JOIN messages m ON m.message_id = rm.message_id JOIN channels c ON c.channel_id = rm.channel_id " +
-            "  WHERE rm.run_id = r.run_id AND m.status = 'PENDING' AND (m.keep = 1 OR c.state IN ('GONE', 'INACCESSIBLE'))) AS blocked, " +
-            "(SELECT COUNT(*) FROM run_results rr WHERE rr.run_id = r.run_id AND rr.verdict = 'WOULD_DELETE') AS dry_would_delete, " +
-            "(SELECT COUNT(DISTINCT rm.channel_id) FROM run_messages rm WHERE rm.run_id = r.run_id) AS channels " +
-            "FROM runs r LEFT JOIN run_options o ON o.run_id = r.run_id WHERE r.run_id = :runId",
-    )
+    @Query("$PROGRESS_SELECT WHERE r.run_id = :runId")
     fun observeProgress(runId: Long): Flow<RunProgress?>
 
     @Query("SELECT * FROM events WHERE run_id = :runId ORDER BY event_id DESC LIMIT :limit")
@@ -291,4 +317,34 @@ interface RunDao {
 
     @Query("SELECT COUNT(*) FROM delete_log WHERE deleted_at >= :sinceMs")
     fun observeDeletedSince(sinceMs: Long): Flow<Int>
+
+    // ---- The Reports screen. Read-only; the events table holds no secrets and no message text. ------------------
+
+    /** Every run, newest first, with the same counts as the Run screen. */
+    @Query("$PROGRESS_SELECT ORDER BY r.run_id DESC")
+    fun observeAllProgress(): Flow<List<RunProgress>>
+
+    /** Responses other than 204, grouped by run, HTTP status and Discord code. */
+    @Query(
+        "SELECT run_id, http_status, discord_code, COUNT(*) AS n FROM events " +
+            "WHERE run_id IS NOT NULL AND http_status IS NOT NULL AND http_status != 204 " +
+            "GROUP BY run_id, http_status, discord_code ORDER BY run_id DESC, http_status, discord_code",
+    )
+    fun observeErrorGroups(): Flow<List<RunErrorGroup>>
+
+    /** The events that carry no response: a request that got none, and a retried server or network error. */
+    @Query(
+        "SELECT run_id, " +
+            "SUM(CASE WHEN action_taken = 'NO_RESPONSE' THEN 1 ELSE 0 END) AS no_response_count, " +
+            "SUM(CASE WHEN action_taken = 'TRANSIENT' THEN 1 ELSE 0 END) AS transient_count " +
+            "FROM events WHERE run_id IS NOT NULL GROUP BY run_id",
+    )
+    fun observeEventTotals(): Flow<List<RunEventTotals>>
+
+    /** Each run's newest halt event. */
+    @Query(
+        "SELECT run_id, action_taken FROM events WHERE event_id IN " +
+            "(SELECT MAX(event_id) FROM events WHERE run_id IS NOT NULL AND action_taken LIKE 'HALT %' GROUP BY run_id)",
+    )
+    fun observeLastHalts(): Flow<List<RunLastHalt>>
 }

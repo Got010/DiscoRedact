@@ -65,9 +65,11 @@ class SettingsStore(context: Context) {
         state.value = read()
     }
 
-    fun clear() {
-        prefs.edit().clear().commit()
+    /** True when the preferences file was written. */
+    fun clear(): Boolean {
+        val written = prefs.edit().clear().commit()
         state.value = read()
+        return written
     }
 
     private companion object {

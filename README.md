@@ -15,9 +15,12 @@ every change must keep.
 Milestone 1: import, local database, channel list, message browser, keep/select, filters, per-DM modes and the
 final review that freezes a run's delete set. Milestone 2: the executor (one request in flight, the delete guard
 before every send, the pacing presets, the response table, the tripwire, per-message status written before the
-next message), the dry run, the Run screen, and the one OkHttp client with its `discord.com` allowlist. **No
-credentials can be stored yet** (milestone 3): a real run starts, finds no header set, sends nothing and pauses;
-only dry runs do anything. Reports, leftovers and signed releases are milestone 4.
+next message), the dry run, the Run screen, and the one OkHttp client with its `discord.com` allowlist. Milestone 3:
+the credential import ("Copy as cURL" from a desktop browser, or the five fields by hand), the Keystore AES-GCM store,
+the capture age with the 14-day staleness warning, and the wipe; the canary (5 real deletes, verified in the client)
+passed. Milestone 4: the Reports screen, the leftovers CSV export, the fuller wipe, and signed releases on GitHub
+Releases (see Releases below). Next, by the owner's card: a sign-in on the phone itself, so the capture needs no
+desktop.
 
 ## Layout
 
@@ -63,3 +66,25 @@ The `events` log keeps its newest 5,000 rows and never holds a header value or a
 Builds run in CI (`.github/workflows/build.yml`). Dependencies are pinned by SHA-256 in
 `gradle/verification-metadata.xml` and enforced with `--dependency-verification=strict`; local builds on macOS or
 Windows use `--dependency-verification=lenient`, CI never does.
+
+## Releases
+
+Signed builds are published on this repository's GitHub Releases page, one release per version (`v0.1.0`, ...), each
+with one file, `discoredact-v<version>.apk`. Install on the phone: open the Releases page in the browser, download the
+APK of the latest release and open it (allow "Install unknown apps" for the browser or Files app once). The release
+notes carry the APK's SHA-256 and the signing certificate's SHA-256.
+
+- **Updates install in place.** Every release is signed with the same key, so a newer release installs over the older
+  one and keeps its data.
+- **The first signed build does not install over a test-key build.** CI also uploads copies signed with a throwaway key
+  (the `apks` artifact of a build run, named `discoredact-<commit>-test-key.apk`) for phone checks; they have a
+  different certificate, so Android refuses to install a release over one. Uninstall the test build first. Uninstalling
+  deletes the app's data (the database and the stored credentials), so finish or stop any run first; the data package
+  can be imported again.
+- **A `VERSION` bump is a release.** `VERSION` at the repo root holds the version (`X.Y.Z`); the app's `versionName` is
+  that text and its `versionCode` is `major * 1_000_000 + minor * 1_000 + patch`. A merge to `main` publishes the
+  version in `VERSION` when that version has no release yet, and the release jobs wait for the owner's approval twice.
+  Once a version is released, later merges publish nothing until `VERSION` is bumped, and a published version is never
+  replaced.
+
+How the release jobs work, and what the gate checks, is in `gate/README.md`.
