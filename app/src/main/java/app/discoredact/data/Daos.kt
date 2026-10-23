@@ -29,11 +29,13 @@ private const val ROW_SELECT = """
 """
 
 /**
- * The leftovers (spec section 10): messages the app could not delete. Never a message marked Keep, whatever its status: still pending in a
- * channel the alt can no longer reach, or refused by Discord (the unknown-4xx outcome). Expects `messages m` joined to `channels c`.
+ * The leftovers (spec section 10): messages the app tried and could not delete. Never a message marked Keep, whatever
+ * its status. Either still pending in a channel the alt can no longer reach AND in a frozen run (a message RJ never put
+ * in a run was never attempted, so it is not listed), or refused by Discord (FAILED, which only a send produces).
+ * Expects `messages m` joined to `channels c`.
  */
 private const val LEFTOVER_WHERE = """
-    m.keep = 0 AND ((m.status = 'PENDING' AND c.state IN ('INACCESSIBLE', 'GONE')) OR m.status = 'FAILED')
+    m.keep = 0 AND ((m.status = 'PENDING' AND c.state IN ('INACCESSIBLE', 'GONE') AND EXISTS (SELECT 1 FROM run_messages rm WHERE rm.message_id = m.message_id)) OR m.status = 'FAILED')
 """
 
 /** Every run with the counts of its frozen set; [PROGRESS_SELECT] is the one definition behind the Run screen and the Reports. */

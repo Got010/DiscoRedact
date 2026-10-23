@@ -51,9 +51,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.time.LocalDate
 import java.time.ZoneId
@@ -230,7 +230,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val count = withContext(Dispatchers.IO) {
                     val pairs = repo.leftovers().map { it.channelId to it.messageId }
-                    val out = resolver.openOutputStream(uri) ?: throw IOException("the file could not be opened")
+                    val out = resolver.openOutputStream(uri, "wt") ?: throw IOException("the file could not be opened")
                     out.use { it.write(LeftoversCsv.toBytes(pairs)) }
                     pairs.size
                 }
@@ -332,11 +332,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Something is writing to the database: Wipe and Purge wait until it is done. */
     val busy: Boolean
-        get() = wiping || importState is ImportState.Running || filters?.applying == true || review.freezing || workerRunning
+        get() = wiping || importState is ImportState.Running || filters?.applying == true || review.freezing || workerRunning || exporting
 
     /** The line under the disabled Purge and Wipe buttons; [runId] is the run to name if the worker is running. */
     fun busyNotice(runId: Long?): String? =
-        if (wiping) "Wiping..." else WipeGate.busyNotice(importState is ImportState.Running, filters?.applying == true, review.freezing, workerRunning, runId)
+        if (wiping) "Wiping..." else WipeGate.busyNotice(importState is ImportState.Running, filters?.applying == true, review.freezing, workerRunning, runId, exporting)
 
     // ---- Navigation ---------------------------------------------------------------------------------------------
 
@@ -532,9 +532,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Wipes the database, the settings and the stored credentials. In this order, each step before the next:
+     *  0. an open run is marked Paused, so a refused wipe leaves it reading "Paused";
      *  1. the run worker is cancelled and WorkManager is asked until it reports nothing active (at most
      *     [WipeGate.WORKER_WAIT_MS]); if one is still active the wipe is refused and nothing is touched;
-     *  2. the process-wide send lock is taken, so no request and its row can be half-way (same limit);
+     *  2. the worker mutex (held by the worker for its whole body) and the send lock are taken by polling tryLock (same limit);
      *  3. the import is cancelled and joined, and a running filter apply or freeze is joined;
      *  4. the files are deleted; 5. WorkManager's finished-work records are pruned and the notifications cleared.
      * Nothing new starts while [wiping] is set.
@@ -543,14 +544,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (wiping) return
         wiping = true
         viewModelScope.launch {
+            var workerLocked = false
             var sendLocked = false
             try {
+                // An open run reads "Paused" if the wipe is refused, not "interrupted".
+                withContext(Dispatchers.IO) { repo.openRunId()?.let { repo.pauseRun(it) } }
                 val refusal = cancelWorkerAndWait()
                 if (refusal != null) {
                     settingsNotice = refusal
                     return@launch
                 }
-                sendLocked = withTimeoutOrNull(WipeGate.WORKER_WAIT_MS) { graph.sendMutex.lock(); true } == true
+                // WorkManager calls a cancelled worker finished before its coroutine has stopped: wait for its real end.
+                workerLocked = lockWithin(graph.workerMutex)
+                if (!workerLocked) {
+                    settingsNotice = WipeGate.STILL_WRITING
+                    return@launch
+                }
+                sendLocked = lockWithin(graph.sendMutex)
                 if (!sendLocked) {
                     settingsNotice = WipeGate.STILL_WRITING
                     return@launch
@@ -581,8 +591,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 settingsNotice = "Wipe failed: ${e.javaClass.simpleName}${e.message?.let { ": $it" } ?: ""}. Try again, or uninstall the app to remove its data."
             } finally {
                 if (sendLocked) graph.sendMutex.unlock()
+                if (workerLocked) graph.workerMutex.unlock()
                 wiping = false
             }
+        }
+    }
+
+    /**
+     * Takes [mutex] by polling `tryLock()` until the wipe's deadline. Never a timeout around `lock()`: a timeout can
+     * fire after the lock was taken and leave it held for good.
+     */
+    private suspend fun lockWithin(mutex: Mutex): Boolean {
+        val start = System.currentTimeMillis()
+        while (true) {
+            if (mutex.tryLock()) return true
+            if (WipeGate.decide(true, System.currentTimeMillis() - start) is WipeGate.Decision.Refuse) return false
+            delay(250)
         }
     }
 

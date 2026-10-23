@@ -52,6 +52,14 @@ class WipeGateTest {
     }
 
     @Test
+    fun anExportIsNamed() {
+        assertEquals(
+            "An export is running; Purge and Wipe wait until it ends.",
+            WipeGate.busyNotice(false, false, false, false, null, exporting = true),
+        )
+    }
+
+    @Test
     fun aRunningRunIsNamedAndToldToStopFirst() {
         assertEquals(
             "Run #12 is running; Purge and Wipe wait until it ends. Pause or Stop the run on the Run screen first.",

@@ -73,7 +73,8 @@ fun ReportsScreen(vm: AppViewModel) {
                     if (byStatus == null) {
                         Text("Reading...")
                     } else {
-                        for (s in MessageStatus.entries) CountLine(statusLabel(s), byStatus[s] ?: 0)
+                        // MessageStatus.INACCESSIBLE is never assigned (the executor records it on the channel), so it has no line.
+                        for (s in MessageStatus.entries) if (s != MessageStatus.INACCESSIBLE) CountLine(statusLabel(s), byStatus[s] ?: 0)
                         CountLine("Total imported", byStatus.values.sum())
                         HorizontalDivider()
                         CountLine("Kept (never deleted; counted in the statuses above too)", kept)
@@ -86,8 +87,9 @@ fun ReportsScreen(vm: AppViewModel) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Leftovers export", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "Leftovers are message IDs the app could not delete: IDs in spaces the alt can no longer reach (left group DMs, " +
-                            "deleted channels), and IDs Discord refused. A message you marked Keep is never listed. Discord has reportedly deleted messages from a supplied ID list " +
+                        "Leftovers are message IDs from your runs that the app could not delete: still pending in a space the alt can " +
+                            "no longer reach (a left group DM, a deleted channel), or refused by Discord. A message you never put in a run, " +
+                            "or marked Keep, is not listed. Discord has reportedly deleted messages from a supplied ID list " +
                             "sent to privacy@discord.com. That is unverified, so treat it as best effort.",
                     )
                     Text(

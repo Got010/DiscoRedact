@@ -51,6 +51,12 @@ class Graph private constructor(private val context: Context) {
     val sendMutex = Mutex()
 
     /**
+     * Held by the run worker for its whole body (DeleteWorker.doWork), so "Wipe everything" can wait for the worker's
+     * real end: WorkManager reports a cancelled worker as finished before its coroutine has stopped.
+     */
+    val workerMutex = Mutex()
+
+    /**
      * Deletes the database (every channel, message, selection, run and event), every setting and the stored
      * credentials with their key. Every step is tried even if an earlier one failed, so a failure never leaves the
      * credentials behind; it then throws, naming the steps (never a value). The caller has stopped the import and the
@@ -68,7 +74,7 @@ class Graph private constructor(private val context: Context) {
         db = null
         repo = null
         if (!databaseGone()) failed += "database"
-        if (runCatching { settings.clear() }.isFailure) failed += "settings"
+        if (!runCatching { settings.clear() }.getOrDefault(false)) failed += "settings"
         if (runCatching { credentialStore.wipe() }.getOrDefault(false).not()) failed += "credentials"
         check(failed.isEmpty()) { "not wiped: ${failed.joinToString(", ")}" }
     }

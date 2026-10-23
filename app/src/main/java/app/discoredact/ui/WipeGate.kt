@@ -32,11 +32,12 @@ object WipeGate {
      * The line under the Purge and Wipe buttons while they are disabled, or null when nothing is writing. A running
      * run is named; it must be paused or stopped on the Run screen first.
      */
-    fun busyNotice(importRunning: Boolean, filterApplying: Boolean, freezing: Boolean, workerRunning: Boolean, runId: Long?): String? {
+    fun busyNotice(importRunning: Boolean, filterApplying: Boolean, freezing: Boolean, workerRunning: Boolean, runId: Long?, exporting: Boolean = false): String? {
         val parts = buildList {
             if (importRunning) add("an import")
             if (filterApplying) add("a filter")
             if (freezing) add("a freeze")
+            if (exporting) add("an export")
             if (workerRunning) add(if (runId != null) "run #$runId" else "a run")
         }
         if (parts.isEmpty()) return null

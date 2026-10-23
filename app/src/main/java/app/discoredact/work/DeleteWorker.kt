@@ -16,10 +16,12 @@ import app.discoredact.MainActivity
 import app.discoredact.core.executor.DryRunTransport
 import app.discoredact.core.executor.Executor
 import app.discoredact.core.executor.SessionEnd
+import app.discoredact.data.RunOptionsEntity
 import app.discoredact.core.executor.Sleeper
 import app.discoredact.core.executor.SystemClock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.random.Random
 
@@ -39,6 +41,11 @@ class DeleteWorker(context: Context, params: WorkerParameters) : CoroutineWorker
     override suspend fun doWork(): Result {
         if (runId <= 0) return Result.failure()
         val options = withContext(Dispatchers.IO) { graph.repository.runOptions(runId) } ?: return Result.failure()
+        // Held for the whole body, so a wipe can wait for the worker's real end (see Graph.workerMutex).
+        return graph.workerMutex.withLock { runSessions(options) }
+    }
+
+    private suspend fun runSessions(options: RunOptionsEntity): Result {
         val title = if (options.dryRun) "Dry run" else "Deleting"
         try {
             setForeground(foregroundInfo(title))

@@ -17,7 +17,8 @@ class LeftoverQueryTest {
     @Test
     fun keepZeroGuardsBothThePendingAndTheFailedBranch() {
         assertEquals(
-            "m.keep = 0 AND ((m.status = 'PENDING' AND c.state IN ('INACCESSIBLE', 'GONE')) OR m.status = 'FAILED')",
+            "m.keep = 0 AND ((m.status = 'PENDING' AND c.state IN ('INACCESSIBLE', 'GONE') AND " +
+                "EXISTS (SELECT 1 FROM run_messages rm WHERE rm.message_id = m.message_id)) OR m.status = 'FAILED')",
             leftoverWhere(),
         )
     }

@@ -148,7 +148,7 @@ fun SettingsScreen(vm: AppViewModel) {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Deletes from this phone:")
                     Text("- the imported channels and messages,\n- every selection and Keep,\n- every run and its report,\n- the settings,\n- the stored credentials and their key.")
-                    Text("What stays: nothing of the app's data stays on the phone, and nothing on Discord changes. A browser session whose headers you captured stays valid until you log out of it in that browser.")
+                    Text("What stays: nothing of the app's data stays on the phone, and nothing on Discord changes. A browser session whose headers you captured stays valid until you log out of it in that browser. An exported leftovers file stays where you saved it.")
                     Text("A run that is only waiting (quiet hours, the daily cap) is cancelled first. If a run is still writing, the wipe is refused and nothing is deleted.", style = MaterialTheme.typography.bodySmall)
                 }
             },
