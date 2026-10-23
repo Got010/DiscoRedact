@@ -109,6 +109,8 @@ the baseline gains:
 directory name) in `data/SignInStorage.kt`, the WebView-free clearer that Wipe everything calls; every other main source
 of `:app` and `:core` still names no network API.
 
+Known limit of the WebView filter: a WebSocket the page itself opens (Discord's gateway, after sign-in) is neither shown to nor refusable by any WebView API, so it cannot be listed under Blocked; the page is closed the moment the capture lands, and the app's own client never opens one.
+
 ## When the gate fails
 
 The log lists each difference as `GATE + field: value`, `GATE - field: value` or `GATE ~ field: old -> new`, then
