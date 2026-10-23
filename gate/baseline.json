@@ -598,7 +598,7 @@
     },
     {
       "value": "https://goo.gle",
-      "note": "AndroidX/Compose error-message link (short-link domain in library text; module not identified, Google Maven jars are not reachable from the agent session); a string only, never contacted"
+      "note": "androidx.compose.runtime's internal-error message text (\"Please report to Google or use https://goo.gle/compose-feedback\"), read from the dex by CI's URL-literal step; a string only, never contacted"
     },
     {
       "value": "https://youtrack.jetbrains.com",
