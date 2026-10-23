@@ -15,9 +15,12 @@ every change must keep.
 Milestone 1: import, local database, channel list, message browser, keep/select, filters, per-DM modes and the
 final review that freezes a run's delete set. Milestone 2: the executor (one request in flight, the delete guard
 before every send, the pacing presets, the response table, the tripwire, per-message status written before the
-next message), the dry run, the Run screen, and the one OkHttp client with its `discord.com` allowlist. **No
-credentials can be stored yet** (milestone 3): a real run starts, finds no header set, sends nothing and pauses;
-only dry runs do anything. Reports, leftovers and signed releases are milestone 4.
+next message), the dry run, the Run screen, and the one OkHttp client with its `discord.com` allowlist. Milestone 3:
+the credential import ("Copy as cURL" from a desktop browser, or the five fields by hand), the Keystore AES-GCM store,
+the capture age with the 14-day staleness warning, and the wipe; the canary (5 real deletes, verified in the client)
+passed. Milestone 4: the Reports screen, the leftovers CSV export, the fuller wipe, and signed releases on GitHub
+Releases (see Releases below). Next, by the owner's card: a sign-in on the phone itself, so the capture needs no
+desktop.
 
 ## Layout
 

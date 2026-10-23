@@ -82,10 +82,13 @@ itself is compared by `cert` on the signed APK in `release-check`.
 
 ## R8 and the network API set
 
-`app/proguard-rules.pro` keeps `okhttp3.**`, `okio.**` and `app.discoredact.net.**` whole, so the `network_api` set in
-the baseline is what OkHttp itself references. It changes with the OkHttp version, not with unrelated code that R8
-happens to shrink or inline. The build log's group "URL literals in the dex files" lists every printable string with
-`://` in the unsigned APK, which is how a `hosts` note names the library behind each literal.
+The `network_api` entries are what the shipped dex references after R8 has shrunk OkHttp, so the java.net and
+javax.net.ssl set can change with unrelated code (24 to 44 between M2 and M3). Pinning it with keep rules was measured
+and rejected in M4: `-keep class okhttp3.** { *; }` listed 375 OkHttp types, and `-keep,allowobfuscation` still listed
+345 renamed ones, because R8 does not repackage kept classes out of `okhttp3/` and the gate matches that prefix. A
+change in the set is therefore reviewed as such, with a note per entry. The build log's group "URL literals in the dex
+files" lists every printable string with `://` in the unsigned APK, which is how a `hosts` note names the library
+behind each literal.
 
 ## When the gate fails
 
