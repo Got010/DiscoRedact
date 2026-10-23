@@ -25,6 +25,7 @@ fun DiscoRedactApp(vm: AppViewModel = viewModel()) {
             Route.Settings -> SettingsScreen(vm)
             Route.Run -> RunScreen(vm)
             Route.Credentials -> CredentialsScreen(vm)
+            Route.Reports -> ReportsScreen(vm)
         }
     }
 }

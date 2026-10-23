@@ -1,6 +1,7 @@
 package app.discoredact
 
 import android.content.Context
+import java.io.File
 import app.discoredact.core.executor.CredentialStore
 import app.discoredact.core.executor.RunStore
 import app.discoredact.data.KeystoreCredentialStore
@@ -49,19 +50,39 @@ class Graph private constructor(private val context: Context) {
     /** One lock for every executor in this process: the guard re-read, the send and its row never interleave. */
     val sendMutex = Mutex()
 
-    /** Deletes the database (every channel, message, selection and run) and every setting. */
+    /**
+     * Deletes the database (every channel, message, selection, run and event), every setting and the stored
+     * credentials with their key. Every step is tried even if an earlier one failed, so a failure never leaves the
+     * credentials behind; it then throws, naming the steps (never a value). The caller has stopped the import and the
+     * run worker first.
+     */
     @Synchronized
     fun wipeEverything() {
         check(!imports.isRunning) { "an import is still running" }
-        db?.close()
+        val failed = mutableListOf<String>()
+        try {
+            db?.close()
+        } catch (_: Exception) {
+            failed += "database close"
+        }
         db = null
         repo = null
-        check(context.deleteDatabase(AppDatabase.NAME) || !context.getDatabasePath(AppDatabase.NAME).exists()) { "database not deleted" }
-        settings.clear()
-        credentialStore.wipe()
+        if (!databaseGone()) failed += "database"
+        if (runCatching { settings.clear() }.isFailure) failed += "settings"
+        if (runCatching { credentialStore.wipe() }.getOrDefault(false).not()) failed += "credentials"
+        check(failed.isEmpty()) { "not wiped: ${failed.joinToString(", ")}" }
+    }
+
+    /** Deletes the database file with its -journal, -wal and -shm companions (Context.deleteDatabase removes them all) and checks. */
+    private fun databaseGone(): Boolean {
+        val main = context.getDatabasePath(AppDatabase.NAME)
+        val deleted = context.deleteDatabase(AppDatabase.NAME) || !main.exists()
+        return deleted && DB_SUFFIXES.none { File(main.path + it).exists() }
     }
 
     companion object {
+        private val DB_SUFFIXES = listOf("", "-journal", "-wal", "-shm")
+
         @Volatile private var instance: Graph? = null
 
         fun get(context: Context): Graph =

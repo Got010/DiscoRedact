@@ -105,3 +105,45 @@ data class RunChannelLine(
     @ColumnInfo(name = "pending") val pending: Int,
     @ColumnInfo(name = "dry_would_delete") val dryWouldDelete: Int,
 )
+
+/** One line of the Reports totals: how many messages have this status. */
+data class StatusCount(
+    @ColumnInfo(name = "status") val status: MessageStatus,
+    @ColumnInfo(name = "n") val count: Int,
+)
+
+/** A message the app could not delete: IDs only, as the leftovers export writes them. */
+data class LeftoverRow(
+    @ColumnInfo(name = "channel_id") val channelId: Long,
+    @ColumnInfo(name = "message_id") val messageId: Long,
+)
+
+/** How often a run saw one HTTP status (and Discord code) other than 204. */
+data class RunErrorGroup(
+    @ColumnInfo(name = "run_id") val runId: Long,
+    @ColumnInfo(name = "http_status") val httpStatus: Int,
+    @ColumnInfo(name = "discord_code") val discordCode: Int?,
+    @ColumnInfo(name = "n") val count: Int,
+)
+
+/** Events of a run that carry no response: a request that got none, and retried server or network errors. */
+data class RunEventTotals(
+    @ColumnInfo(name = "run_id") val runId: Long,
+    @ColumnInfo(name = "no_response_count") val noResponse: Int,
+    @ColumnInfo(name = "transient_count") val transientCount: Int,
+)
+
+/** A run's newest halt event, as the event log words it (a reason key and the status, never a header or a text). */
+data class RunLastHalt(
+    @ColumnInfo(name = "run_id") val runId: Long,
+    @ColumnInfo(name = "action_taken") val actionTaken: String,
+)
+
+/** Everything the Reports screen shows about one run. */
+data class RunReport(
+    val progress: RunProgress,
+    val errors: List<RunErrorGroup>,
+    val noResponse: Int,
+    val transientCount: Int,
+    val lastHalt: String?,
+)

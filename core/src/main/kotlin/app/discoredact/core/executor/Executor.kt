@@ -364,7 +364,7 @@ class Executor(
             stopReason == STOP_PAUSED_USER -> "Paused"
             stopReason == STOP_PAUSED_TRANSIENT -> "Paused after repeated server or network errors; Resume retries"
             stopReason == STOP_PAUSED_GUARD -> "Paused: the delete guard kept refusing; review the selection"
-            stopReason == STOP_NO_CREDENTIALS -> "No credentials stored; import them first (milestone 3)"
+            stopReason == STOP_NO_CREDENTIALS -> "No credentials stored; import them on the Credentials screen (Settings)"
             stopReason == STOP_WAITING_QUIET -> "Waiting for quiet hours to end"
             stopReason == STOP_WAITING_CAP -> "Daily cap reached; continues tomorrow"
             stopReason == STOP_WAITING_APP -> "Waiting: a run continues only while the app is open"

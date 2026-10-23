@@ -17,6 +17,8 @@ import app.discoredact.core.selection.DeletePlanBuilder
 import app.discoredact.core.selection.MessageFilter
 import app.discoredact.core.selection.RunRules
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.withContext
 import app.discoredact.core.selection.SelectionRules
 
@@ -254,6 +256,21 @@ class Repository(private val db: AppDatabase, private val clock: () -> Long = Sy
     fun observeNextChannelName(runId: Long) = runs.observeNextChannelName(runId)
     fun observeChannelLines(runId: Long) = runs.observeChannelLines(runId)
     fun observeDeletedSince(sinceMs: Long) = runs.observeDeletedSince(sinceMs)
+
+    // ---- Reports (M4). Read-only. -------------------------------------------------------------------------------
+
+    fun observeStatusCounts() = messages.observeStatusCounts()
+    fun observeKeptCount() = messages.observeKeptCount()
+    fun observeLeftoverCount() = messages.observeLeftoverCount()
+    suspend fun leftovers(): List<LeftoverRow> = messages.leftovers()
+
+    /** Every run, newest first, with its counts and its errors. */
+    fun observeRunReports(): Flow<List<RunReport>> = combine(
+        runs.observeAllProgress(),
+        runs.observeErrorGroups(),
+        runs.observeEventTotals(),
+        runs.observeLastHalts(),
+    ) { progress, errors, totals, halts -> assembleRunReports(progress, errors, totals, halts) }
 
     fun runOptions(runId: Long): RunOptionsEntity? = runs.options(runId)
     fun observeOpenRunId() = runs.observeOpenRunId()
