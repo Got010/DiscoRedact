@@ -109,7 +109,19 @@ the baseline gains:
 directory name) in `data/SignInStorage.kt`, the WebView-free clearer that Wipe everything calls; every other main source
 of `:app` and `:core` still names no network API.
 
-Known limit of the WebView filter: a WebSocket the page itself opens (Discord's gateway, after sign-in) is neither shown to nor refusable by any WebView API, so it cannot be listed under Blocked; the page is closed the moment the capture lands, and the app's own client never opens one.
+Known limits of the WebView filter. The filter refuses every request the WebView API shows it; what the API does not
+show it, it cannot refuse or list under Blocked:
+
+- a WebSocket the page opens (Discord's login page may open its QR-login socket before sign-in, and the client opens
+  its gateway socket after it);
+- a redirect of a subresource or a fetch/XHR from an admitted host to another host (main-frame redirects do reach the
+  navigation check, which refuses them);
+- preconnect and DNS prefetch (lookups and handshakes with no request);
+- WebRTC (STUN/TURN over UDP), and WebTransport;
+- the WebView provider's own traffic (metrics, variations, component updates; off on GrapheneOS's Vanadium).
+
+Closing the page the moment the capture lands, and whenever the screen is left or the app goes to the background,
+limits these; it does not prevent them. The app's own client never opens any of them.
 
 ## When the gate fails
 

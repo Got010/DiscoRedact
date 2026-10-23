@@ -304,9 +304,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Stores the set the sign-in page captured (B34 Form A), exactly as a cURL import stores it, then closes the
-     * sign-in screen. [onResult] gets whether it was stored and the screen's status line; never a value.
+     * sign-in screen. The page was already ended; [clearFailed] names the clear's failed steps, if any. [onResult]
+     * gets whether it was stored and the screen's status line; never a value. Refused while another store runs.
      */
-    fun storeSignIn(headers: HeaderSet, onResult: (Boolean, String) -> Unit) {
+    fun storeSignIn(headers: HeaderSet, clearFailed: List<String>, onResult: (Boolean, String) -> Unit) {
+        val cleared = if (clearFailed.isEmpty()) null else signInClearNote(clearFailed)
+        if (credentialsBusy) {
+            onResult(false, listOfNotNull("Another capture is being stored; nothing was kept from this one.", cleared).joinToString(" "))
+            return
+        }
+        credentialsBusy = true
         viewModelScope.launch {
             val problem = try {
                 withContext(Dispatchers.IO) { graph.credentialStore.save(headers) }
@@ -315,13 +322,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 throw e
             } catch (e: Exception) {
                 "Could not store the credentials: ${e.javaClass.simpleName}. Nothing was kept."
+            } finally {
+                credentialsBusy = false
             }
-            val line = problem
-                ?: "Signed in on the phone. Stored: Authorization, User-Agent, X-Super-Properties, X-Discord-Locale, X-Discord-Timezone. Captured just now; everything the sign-in page stored was deleted."
-            credentialNotice = listOfNotNull(line, signInClearNote).joinToString(" ")
+            val stored = "Signed in on the phone. Stored: Authorization, User-Agent, X-Super-Properties, X-Discord-Locale, X-Discord-Timezone. Captured just now."
+            credentialNotice = when {
+                problem == null && cleared == null -> "$stored Everything the sign-in page stored was deleted."
+                problem == null -> "$stored $cleared"
+                cleared == null -> "$problem The sign-in page's data was deleted."
+                else -> "$problem $cleared"
+            }
             refreshCredentialStatus()
             if (problem != null) {
-                onResult(false, "$problem The page's data was deleted.")
+                onResult(false, credentialNotice.orEmpty())
                 return@launch
             }
             onResult(true, "Captured; closing.")
@@ -330,19 +343,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Waits for the once-per-process sweep of what an earlier sign-in page left on disk (Graph.signInSweep). */
-    suspend fun awaitSignInSweep() {
-        graph.signInSweep.await()
+    /** Whether a sign-in page may load: false when what an earlier page left on disk could not be deleted (rule 19). */
+    suspend fun signInStorageClean(): Boolean = graph.signInStorageClean()
+
+    /**
+     * Why "Sign in here" is off, or null. A fresh login and the page's own traffic must not run beside an active run
+     * (CLAUDE.md rule 3), and nothing starts during a wipe.
+     */
+    fun signInBlockedReason(work: RunScheduler.WorkState): String? = when {
+        wiping -> "Wiping"
+        work != RunScheduler.WorkState.NONE -> "A run is active; pause or stop it first"
+        else -> null
     }
 
-    /** Set when the open sign-in page's clear threw at a step; reset when the sign-in screen opens. */
-    private var signInClearNote: String? = null
+    /** The note for a clear that threw at these steps (names only). */
+    fun signInClearNote(steps: List<String>): String =
+        "Not every part of the sign-in page's data could be deleted (${steps.joinToString(", ")}). Wipe everything (Settings) removes it."
 
-    /** The sign-in page's clear threw at these steps (names only): say so on the Credentials screen. */
+    /** The page was ended by Close, back or the app leaving the screen, and its clear threw: say so on the Credentials screen. */
     fun signInClearFailed(steps: List<String>) {
-        val note = "Not every part of the sign-in page's data could be deleted (${steps.joinToString(", ")}). Wipe everything (Settings) removes it."
-        signInClearNote = note
-        credentialNotice = listOfNotNull(credentialNotice, note).joinToString(" ")
+        credentialNotice = listOfNotNull(credentialNotice, signInClearNote(steps)).joinToString(" ")
     }
 
     fun wipeCredentials() {
@@ -393,7 +413,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             is Route.Filters -> filters = FilterState(route.channelId).also { schedulePreview(it) }
             Route.Review -> startReview()
             Route.Credentials -> { credentialNotice = null; refreshCredentialStatus() }
-            Route.SignIn -> signInClearNote = null
             Route.Settings -> refreshCredentialStatus()
             Route.Reports -> reportNotice = null
             is Route.Frozen -> refreshCredentialStatus()

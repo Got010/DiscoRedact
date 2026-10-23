@@ -24,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,6 +54,8 @@ fun CredentialsScreen(vm: AppViewModel) {
     var tz by remember { mutableStateOf(java.util.TimeZone.getDefault().id) }
     var confirmWipe by remember { mutableStateOf(false) }
     val status = vm.credentialState
+    val work by vm.workState.collectAsState()
+    val signInBlocked = vm.signInBlockedReason(work)
     Scaffold(topBar = { TopAppBar(title = { Text("Credentials") }, navigationIcon = { BackButton(vm) }) }) { pad ->
         Column(
             Modifier.padding(pad).padding(16.dp).fillMaxSize().verticalScroll(rememberScrollState()),
@@ -77,9 +80,10 @@ fun CredentialsScreen(vm: AppViewModel) {
             )
             Button(
                 onClick = { vm.go(Route.SignIn) },
-                enabled = !vm.credentialsBusy,
+                enabled = signInBlocked == null && !vm.credentialsBusy,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Sign in here") }
+            signInBlocked?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
 
             HorizontalDivider()
             Text("Or paste from a desktop browser", style = MaterialTheme.typography.titleMedium)

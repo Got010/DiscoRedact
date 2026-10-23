@@ -55,6 +55,8 @@ class NoNetworkCodeTest {
             "addJavascriptInterface", "evaluateJavascript", "javascript:", "loadData", "postWebMessage", "createWebMessageChannel",
             "addDocumentStartJavaScript", "addWebMessageListener", "setDownloadListener", "WebChromeClient", "getCookie",
             "Log.", "println", "printStackTrace", "Toast",
+            // Fail-open or exposure switches: debugging over adb, a TLS-error override, page archives, a posted form.
+            "setWebContentsDebuggingEnabled", "onReceivedSslError", ".proceed(", "saveWebArchive", "postUrl",
         )
         val files = sources(File("src/main/java/app/discoredact/ui/signin")).toList() + File("src/main/java/app/discoredact/data/SignInStorage.kt")
         assertTrue(files.size >= 3)

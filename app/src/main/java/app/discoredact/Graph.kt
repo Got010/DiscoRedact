@@ -19,6 +19,7 @@ import app.discoredact.data.SettingsStore
 import app.discoredact.data.SignInStorage
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.withContext
 
 /** Process-wide objects. "Wipe everything" closes and deletes the database; the next access opens a fresh one. */
 class Graph private constructor(private val context: Context) {
@@ -51,11 +52,25 @@ class Graph private constructor(private val context: Context) {
     val credentials: CredentialStore get() = credentialStore
 
     /**
-     * What a sign-in page left on disk when the process ended with the page open (a kill, a crash), deleted once per
-     * process before any page exists; the sign-in screen waits for it before it loads the page.
+     * What a sign-in page left on disk when the process ended with the page open (a kill, a crash), deleted at process
+     * start before any page exists. The sign-in screen loads a page only after [signInStorageClean] says so.
      */
-    val signInSweep: Deferred<Boolean> =
+    private val signInSweep: Deferred<Boolean> =
         CoroutineScope(SupervisorJob() + Dispatchers.IO).async { runCatching { SignInStorage.wipe(context) }.getOrDefault(false) }
+
+    @Volatile private var signInSwept = false
+
+    /**
+     * True once the sweep has succeeded. A failed sweep is tried again on each call: no page can have run in this
+     * process before it succeeds, so deleting the directories is still safe (after Wipe everything it passes).
+     * False means the page must not load (CLAUDE.md rule 19).
+     */
+    suspend fun signInStorageClean(): Boolean {
+        if (signInSwept) return true
+        val ok = signInSweep.await() || withContext(Dispatchers.IO) { runCatching { SignInStorage.wipe(context) }.getOrDefault(false) }
+        if (ok) signInSwept = true
+        return ok
+    }
 
     /** One lock for every executor in this process: the guard re-read, the send and its row never interleave. */
     val sendMutex = Mutex()

@@ -59,13 +59,14 @@ sealed interface PageStatus {
 /**
  * One sign-in page: a WebView on Discord's login page behind the host filter of [SignInHosts], and the capture of
  * [SignInCapture] on the page's own requests. The app runs nothing in the page and reads request headers only; the
- * header map is read once per request and dropped, never logged, kept or shown. The callbacks run on the main thread;
- * [onCaptured] at most once.
+ * header map is read once per request and dropped, never logged, kept or shown. The callbacks run on the main thread.
+ * [onCaptured] runs at most once, after the page has been ended, with the clear's failed steps (names only); it does
+ * not run at all if the page was ended first (Close, back, the app leaving the screen).
  */
 class SignInPage(
     private val onBlocked: (String) -> Unit,
     private val onStatus: (PageStatus) -> Unit,
-    private val onCaptured: (HeaderSet) -> Unit,
+    private val onCaptured: (HeaderSet, List<String>) -> Unit,
 ) {
     private val main = Handler(Looper.getMainLooper())
 
@@ -77,6 +78,10 @@ class SignInPage(
     @Volatile private var lastStatus: PageStatus? = null
     @Volatile private var userAgent = ""
     private var webView: WebView? = null
+    private var openedIn: Context? = null
+
+    /** Main thread only: true from [open] until [end]. */
+    val isOpen: Boolean get() = webView != null
 
     /** Main thread only: makes the WebView and starts the login page. */
     @SuppressLint("SetJavaScriptEnabled") // Discord's login page needs script and DOM storage; the app adds no script of its own.
@@ -108,6 +113,7 @@ class SignInPage(
             setServiceWorkerClient(WorkerFilter)
         }
         webView = view
+        openedIn = context
         view.loadUrl(SignInHosts.LOGIN_PAGE)
         return view
     }
@@ -118,6 +124,7 @@ class SignInPage(
         if (current === this) current = null
         val view = webView ?: return emptyList()
         webView = null
+        openedIn = null
         return SignInSession.clear(view, context)
     }
 
@@ -135,7 +142,7 @@ class SignInPage(
             is SignInCapture.Outcome.Captured ->
                 if (ended.compareAndSet(false, true)) {
                     val headers = outcome.headers
-                    main.post { onCaptured(headers) }
+                    main.post { captured(headers) }
                 }
             is SignInCapture.Outcome.Unusable -> {
                 exposed = true
@@ -148,6 +155,12 @@ class SignInPage(
         }
         // The page's own request goes ahead untouched.
         return null
+    }
+
+    /** Main thread. Ends the page first, so the set is stored only from a page that was cleared and never after it was closed. */
+    private fun captured(headers: HeaderSet) {
+        val context = openedIn ?: return
+        onCaptured(headers, end(context))
     }
 
     /** Navigations: true cancels one that the filter refuses. */

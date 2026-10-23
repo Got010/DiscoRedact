@@ -2,6 +2,8 @@
 
 package app.discoredact.ui.signin
 
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,6 +35,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
 import app.discoredact.core.executor.HeaderSet
 import app.discoredact.core.signin.SignInHosts
 import app.discoredact.ui.AppViewModel
@@ -51,7 +56,11 @@ fun SignInScreen(vm: AppViewModel) {
     var status by remember { mutableStateOf("Nothing is loaded yet.") }
     val blocked = remember { mutableStateListOf<String>() }
     var stored by remember { mutableStateOf(false) }
+    // What the Ended phase says; it claims a deletion only when the clear reported no failed step.
+    var endText by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
+    fun cleared(failed: List<String>): String =
+        if (failed.isEmpty()) "The page is closed and everything it stored was deleted." else vm.signInClearNote(failed)
     Scaffold(
         topBar = {
             TopAppBar(
@@ -74,9 +83,15 @@ fun SignInScreen(vm: AppViewModel) {
                         phase = Phase.Opening
                         status = "Opening the sign-in page."
                         scope.launch {
-                            vm.awaitSignInSweep()
-                            status = statusLine(PageStatus.Waiting)
-                            phase = Phase.Page
+                            if (vm.signInStorageClean()) {
+                                status = statusLine(PageStatus.Waiting)
+                                phase = Phase.Page
+                            } else {
+                                // Fail closed (CLAUDE.md rule 19): never load over what an earlier page left.
+                                status = "Nothing was loaded."
+                                endText = "What an earlier sign-in page left on disk could not be deleted. Wipe everything (Settings) removes it; then try again."
+                                phase = Phase.Ended
+                            }
                         }
                     },
                 )
@@ -84,18 +99,27 @@ fun SignInScreen(vm: AppViewModel) {
                 Phase.Page -> Page(
                     onBlocked = { label -> if (label !in blocked) blocked.add(label) },
                     onStatus = { s -> status = statusLine(s) },
-                    onCaptured = { headers: HeaderSet ->
-                        // Leaving the Page phase ends the page (its DisposableEffect clears it) while the set is stored.
+                    onCaptured = { headers: HeaderSet, failed: List<String> ->
+                        // The page has already been ended and cleared; the set is stored only now.
                         phase = Phase.Ended
                         stored = true
+                        endText = cleared(failed)
                         status = "Captured; storing."
-                        vm.storeSignIn(headers) { ok, line -> stored = ok; status = line }
+                        vm.storeSignIn(headers, failed) { ok, line -> stored = ok; status = line }
+                    },
+                    onBackground = { failed ->
+                        phase = Phase.Ended
+                        status = "Nothing was captured."
+                        endText = listOfNotNull(
+                            "The page was closed because the app left the screen; start again.",
+                            failed.takeIf { it.isNotEmpty() }?.let { vm.signInClearNote(it) },
+                        ).joinToString(" ")
                     },
                     onClearFailed = vm::signInClearFailed,
                     modifier = Modifier.weight(1f).fillMaxWidth().imePadding(),
                 )
                 Phase.Ended -> Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("The page is closed and everything it stored was deleted.", style = MaterialTheme.typography.bodySmall)
+                    Text(endText, style = MaterialTheme.typography.bodySmall)
                     if (!stored) {
                         Button(onClick = { blocked.clear(); phase = Phase.Notice; status = "Nothing is loaded yet." }, modifier = Modifier.fillMaxWidth()) {
                             Text("Start again")
@@ -133,30 +157,52 @@ private fun Notice(onLoad: () -> Unit) {
             style = MaterialTheme.typography.bodyMedium,
         )
         Text(
-            "When the capture ends, or when you close this screen, everything the page stored (cookies, site storage, " +
-                "cache, history, form data) is deleted. Nothing loads before you tap the button.",
+            "When the capture ends, when you close this screen, or when the app leaves the screen (home, another app, " +
+                "the screen turning off), the page is closed and everything it stored (cookies, site storage, cache, " +
+                "history, form data) is deleted. If your second-factor code comes from an app on this phone, open that " +
+                "app in split screen rather than switching to it. Nothing loads before you tap the button.",
             style = MaterialTheme.typography.bodyMedium,
         )
         Button(onClick = onLoad, modifier = Modifier.fillMaxWidth()) { Text("Load the sign-in page") }
     }
 }
 
-/** The page itself. Leaving composition for any reason (capture, Close, back, rotation, the app closing) ends it. */
+/**
+ * The page itself. Leaving composition for any reason (Close, back, rotation) ends it, and so does the app leaving the
+ * screen (ON_STOP: home, another app, the screen turning off), which ends it at once rather than at the next frame.
+ */
 @Composable
 private fun Page(
     onBlocked: (String) -> Unit,
     onStatus: (PageStatus) -> Unit,
-    onCaptured: (HeaderSet) -> Unit,
+    onCaptured: (HeaderSet, List<String>) -> Unit,
+    onBackground: (List<String>) -> Unit,
     onClearFailed: (List<String>) -> Unit,
     modifier: Modifier,
 ) {
     val context = LocalContext.current
     val page = remember { SignInPage(onBlocked, onStatus, onCaptured) }
-    DisposableEffect(page) {
+    val lifecycle = remember(context) { context.lifecycleOwner()?.lifecycle }
+    DisposableEffect(page, lifecycle) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP && page.isOpen) onBackground(page.end(context))
+        }
+        lifecycle?.addObserver(observer)
         onDispose {
+            lifecycle?.removeObserver(observer)
             val failed = page.end(context)
             if (failed.isNotEmpty()) onClearFailed(failed)
         }
     }
     AndroidView(factory = { c -> page.open(c) }, modifier = modifier)
+}
+
+/** The activity hosting the screen, as a lifecycle owner (LocalContext may be a wrapper around it). */
+private fun Context.lifecycleOwner(): LifecycleOwner? {
+    var c: Context? = this
+    while (c != null) {
+        if (c is LifecycleOwner) return c
+        c = (c as? ContextWrapper)?.baseContext
+    }
+    return null
 }

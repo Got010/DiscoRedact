@@ -67,6 +67,14 @@ class SignInHostsTest {
             "https://evil.example#@discord.com/",
             "https://evil.example?@discord.com/",
             "https://evil.example\\.discord.com/",
+            // a subdomain label with a character outside [a-z0-9-], or starting or ending with a hyphen
+            "https://x_y.discord.com/",
+            "https://\u00e9.discord.com/",
+            "https://a.b*c.discordapp.net/",
+            "https://-a.discord.com/",
+            "https://a-.discord.com/",
+            "https://cdn.-discordapp.com/",
+            "https://x.discord-.com/",
             // malformed
             "https://discord.com./",
             "https://.discord.com/",

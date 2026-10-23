@@ -111,6 +111,33 @@ class SignInCaptureTest {
         assertNull(SignInCapture.fromRequest(api, full("X-Super-Properties" to "a\u0000b"), pageUa, 1L))
     }
 
+    /**
+     * A control character is outside printable ASCII, so the pre-check names it; HeaderSet would refuse it too. Either
+     * way the outcome is Unusable with exactly that field, and no text carries the value.
+     */
+    @Test fun aControlCharacterGivesUnusableWithThatFieldOnly() {
+        for (field in listOf("Authorization", "User-Agent", "X-Super-Properties", "X-Discord-Locale", "X-Discord-Timezone")) {
+            for (bad in listOf("CTRL-SENTINEL\u0007x", "CTRL-SENTINEL\u007fx", "CTRL-SENTINEL\u0000x", "a\nCTRL-SENTINEL")) {
+                val o = SignInCapture.inspect(api, full(field to bad), pageUa, 1L)
+                assertEquals("$field ${bad.length}", Outcome.Unusable(emptyList(), listOf(field.lowercase())), o)
+                assertFalse(o.toString().contains("SENTINEL"))
+                assertNull(SignInCapture.fromRequest(api, full(field to bad), pageUa, 1L))
+            }
+        }
+    }
+
+    /** The catch path: whatever the map does, inspect returns Unusable naming every field, never NotApi and no value. */
+    @Test fun aThrowingHeaderMapGivesUnusableAndNoValue() {
+        val throwing = object : AbstractMap<String, String>() {
+            override val entries: Set<Map.Entry<String, String>>
+                get() = throw IllegalStateException("MAP-SENTINEL $token")
+        }
+        val o = SignInCapture.inspect(api, throwing, pageUa, 1L)
+        assertEquals(Outcome.Unusable(emptyList(), SignInCapture.FIELDS), o)
+        assertFalse(o.toString().contains("SENTINEL"))
+        assertNull(SignInCapture.fromRequest(api, throwing, pageUa, 1L))
+    }
+
     @Test fun aNullNameOrValueInThePlatformsMapIsSkipped() {
         @Suppress("UNCHECKED_CAST")
         val withNulls = (HashMap<String?, String?>(full()).apply { put(null, "x"); put("X-Other", null) }) as Map<String, String>
