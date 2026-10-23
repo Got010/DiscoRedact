@@ -63,3 +63,25 @@ The `events` log keeps its newest 5,000 rows and never holds a header value or a
 Builds run in CI (`.github/workflows/build.yml`). Dependencies are pinned by SHA-256 in
 `gradle/verification-metadata.xml` and enforced with `--dependency-verification=strict`; local builds on macOS or
 Windows use `--dependency-verification=lenient`, CI never does.
+
+## Releases
+
+Signed builds are published on this repository's GitHub Releases page, one release per version (`v0.1.0`, ...), each
+with one file, `discoredact-v<version>.apk`. Install on the phone: open the Releases page in the browser, download the
+APK of the latest release and open it (allow "Install unknown apps" for the browser or Files app once). The release
+notes carry the APK's SHA-256 and the signing certificate's SHA-256.
+
+- **Updates install in place.** Every release is signed with the same key, so a newer release installs over the older
+  one and keeps its data.
+- **The first signed build does not install over a test-key build.** CI also uploads copies signed with a throwaway key
+  (the `apks` artifact of a build run, named `discoredact-<commit>-test-key.apk`) for phone checks; they have a
+  different certificate, so Android refuses to install a release over one. Uninstall the test build first. Uninstalling
+  deletes the app's data (the database and the stored credentials), so finish or stop any run first; the data package
+  can be imported again.
+- **A `VERSION` bump is a release.** `VERSION` at the repo root holds the version (`X.Y.Z`); the app's `versionName` is
+  that text and its `versionCode` is `major * 1_000_000 + minor * 1_000 + patch`. A merge to `main` publishes the
+  version in `VERSION` when that version has no release yet, and the release jobs wait for the owner's approval twice.
+  Once a version is released, later merges publish nothing until `VERSION` is bumped, and a published version is never
+  replaced.
+
+How the release jobs work, and what the gate checks, is in `gate/README.md`.
