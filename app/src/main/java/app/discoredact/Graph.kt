@@ -16,6 +16,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.sync.Mutex
 import app.discoredact.data.Repository
 import app.discoredact.data.SettingsStore
+import app.discoredact.data.SignInStorage
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
 
 /** Process-wide objects. "Wipe everything" closes and deletes the database; the next access opens a fresh one. */
 class Graph private constructor(private val context: Context) {
@@ -47,6 +50,13 @@ class Graph private constructor(private val context: Context) {
     val credentialStore = KeystoreCredentialStore(context)
     val credentials: CredentialStore get() = credentialStore
 
+    /**
+     * What a sign-in page left on disk when the process ended with the page open (a kill, a crash), deleted once per
+     * process before any page exists; the sign-in screen waits for it before it loads the page.
+     */
+    val signInSweep: Deferred<Boolean> =
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).async { runCatching { SignInStorage.wipe(context) }.getOrDefault(false) }
+
     /** One lock for every executor in this process: the guard re-read, the send and its row never interleave. */
     val sendMutex = Mutex()
 
@@ -57,10 +67,10 @@ class Graph private constructor(private val context: Context) {
     val workerMutex = Mutex()
 
     /**
-     * Deletes the database (every channel, message, selection, run and event), every setting and the stored
-     * credentials with their key. Every step is tried even if an earlier one failed, so a failure never leaves the
-     * credentials behind; it then throws, naming the steps (never a value). The caller has stopped the import and the
-     * run worker first.
+     * Deletes the database (every channel, message, selection, run and event), every setting, the stored credentials
+     * with their key, and whatever the sign-in page's data directories still hold (SignInStorage). Every step is tried
+     * even if an earlier one failed, so a failure never leaves the credentials behind; it then throws, naming the steps
+     * (never a value). The caller has stopped the import and the run worker first.
      */
     @Synchronized
     fun wipeEverything() {
@@ -76,6 +86,7 @@ class Graph private constructor(private val context: Context) {
         if (!databaseGone()) failed += "database"
         if (!runCatching { settings.clear() }.getOrDefault(false)) failed += "settings"
         if (runCatching { credentialStore.wipe() }.getOrDefault(false).not()) failed += "credentials"
+        if (!runCatching { SignInStorage.wipe(context) }.getOrDefault(false)) failed += "sign-in page data"
         check(failed.isEmpty()) { "not wiped: ${failed.joinToString(", ")}" }
     }
 

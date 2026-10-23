@@ -90,6 +90,25 @@ change in the set is therefore reviewed as such, with a note per entry. The buil
 files" lists every printable string with `://` in the unsigned APK, which is how a `hosts` note names the library
 behind each literal.
 
+## The sign-in screen's WebView
+
+From 0.2.0 the app shows Discord's login page in a WebView (`app/discoredact/ui/signin/`) to capture the five headers on
+the phone. The WebView is a platform API: no permission, component, dependency or native library comes with it. What
+the baseline gains:
+
+- `network_api`: the `android.webkit` types the sign-in page uses (`WebView`, `WebViewClient`, `WebSettings`,
+  `WebResourceRequest`, `WebResourceResponse`, `CookieManager`, `WebStorage`, `WebViewDatabase`,
+  `ServiceWorkerController`, `ServiceWorkerClient`, `ServiceWorkerWebSettings`, and any type their called methods'
+  signatures name, such as `ValueCallback`), each with a note; the CI run lists the exact set.
+- `hosts`: the WebView's own allowlist, `SignInHosts.HOSTS` in `:core` (`discord.com`, `discordapp.com`,
+  `discordapp.net`, `hcaptcha.com`), each with a note. The filter admits only https, these hosts and their subdomains,
+  with no port and no user info; everything else gets an empty 403. The app's own client keeps its one-host allowlist
+  (`HostAllowlist` in `:net`), which this list never reaches.
+
+`NoNetworkCodeTest` allows `android.webkit` and `WebView` in exactly `ui/signin/SignInSession.kt`, and `WebView` (as a
+directory name) in `data/SignInStorage.kt`, the WebView-free clearer that Wipe everything calls; every other main source
+of `:app` and `:core` still names no network API.
+
 ## When the gate fails
 
 The log lists each difference as `GATE + field: value`, `GATE - field: value` or `GATE ~ field: old -> new`, then

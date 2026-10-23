@@ -58,6 +58,9 @@ import java.io.IOException
 import java.time.LocalDate
 import java.time.ZoneId
 
+/** How long the sign-in screen shows "Captured; closing." before it returns to the Credentials screen. */
+private const val SIGN_IN_CLOSE_MS = 1_200L
+
 sealed interface Route {
     data object Channels : Route
     data object Import : Route
@@ -68,6 +71,7 @@ sealed interface Route {
     data object Settings : Route
     data object Run : Route
     data object Credentials : Route
+    data object SignIn : Route
     data object Reports : Route
 }
 
@@ -298,6 +302,49 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Stores the set the sign-in page captured (B34 Form A), exactly as a cURL import stores it, then closes the
+     * sign-in screen. [onResult] gets whether it was stored and the screen's status line; never a value.
+     */
+    fun storeSignIn(headers: HeaderSet, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            val problem = try {
+                withContext(Dispatchers.IO) { graph.credentialStore.save(headers) }
+                null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                "Could not store the credentials: ${e.javaClass.simpleName}. Nothing was kept."
+            }
+            val line = problem
+                ?: "Signed in on the phone. Stored: Authorization, User-Agent, X-Super-Properties, X-Discord-Locale, X-Discord-Timezone. Captured just now; everything the sign-in page stored was deleted."
+            credentialNotice = listOfNotNull(line, signInClearNote).joinToString(" ")
+            refreshCredentialStatus()
+            if (problem != null) {
+                onResult(false, "$problem The page's data was deleted.")
+                return@launch
+            }
+            onResult(true, "Captured; closing.")
+            delay(SIGN_IN_CLOSE_MS)
+            if (route == Route.SignIn) back()
+        }
+    }
+
+    /** Waits for the once-per-process sweep of what an earlier sign-in page left on disk (Graph.signInSweep). */
+    suspend fun awaitSignInSweep() {
+        graph.signInSweep.await()
+    }
+
+    /** Set when the open sign-in page's clear threw at a step; reset when the sign-in screen opens. */
+    private var signInClearNote: String? = null
+
+    /** The sign-in page's clear threw at these steps (names only): say so on the Credentials screen. */
+    fun signInClearFailed(steps: List<String>) {
+        val note = "Not every part of the sign-in page's data could be deleted (${steps.joinToString(", ")}). Wipe everything (Settings) removes it."
+        signInClearNote = note
+        credentialNotice = listOfNotNull(credentialNotice, note).joinToString(" ")
+    }
+
     fun wipeCredentials() {
         viewModelScope.launch {
             val removed = withContext(Dispatchers.IO) { graph.credentialStore.wipe() }
@@ -346,6 +393,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             is Route.Filters -> filters = FilterState(route.channelId).also { schedulePreview(it) }
             Route.Review -> startReview()
             Route.Credentials -> { credentialNotice = null; refreshCredentialStatus() }
+            Route.SignIn -> signInClearNote = null
             Route.Settings -> refreshCredentialStatus()
             Route.Reports -> reportNotice = null
             is Route.Frozen -> refreshCredentialStatus()

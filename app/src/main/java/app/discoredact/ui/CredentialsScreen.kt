@@ -38,7 +38,8 @@ import app.discoredact.core.executor.CredentialState
 fun credentialSummary(s: CredentialState?): String = s?.describe(::formatTime) ?: "Checking the stored credentials."
 
 /**
- * Spec section 7: import by "Copy as cURL" from a desktop browser logged into the alt, or the five fields by hand;
+ * Spec section 7: sign in on the phone (B34 Form A, the sign-in screen), or import by "Copy as cURL" from a desktop
+ * browser logged into the alt, or the five fields by hand;
  * the status with its age and the 14-day staleness warning; wipe. Values are never shown back.
  */
 @Composable
@@ -68,7 +69,20 @@ fun CredentialsScreen(vm: AppViewModel) {
             vm.credentialNotice?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
 
             HorizontalDivider()
-            Text("Import from \"Copy as cURL\"", style = MaterialTheme.typography.titleMedium)
+            Text("Sign in on this phone", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Opens Discord's own sign-in page in the app. Discord's page handles the password; the app copies only the five " +
+                    "headers from the page's own requests to Discord's API, then deletes everything the page stored.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Button(
+                onClick = { vm.go(Route.SignIn) },
+                enabled = !vm.credentialsBusy,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Sign in here") }
+
+            HorizontalDivider()
+            Text("Or paste from a desktop browser", style = MaterialTheme.typography.titleMedium)
             Text(
                 "On a desktop browser logged into the alt: open the developer tools, Network panel, pick any request to Discord's API, " +
                     "right-click it, Copy > Copy as cURL, and paste it here. The paste is read once for its headers and not kept.",
