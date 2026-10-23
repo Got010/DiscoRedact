@@ -606,7 +606,9 @@
     }
   ],
   "signing": {
-    "cert_sha256": null
+    "cert_sha256": [
+      "0b44a342d9b0a9279806e64cef9e2fc10e56f506618444149bfd59ec699d1a37"
+    ]
   },
   "scan": {
     "extra_text_paths": []

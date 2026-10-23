@@ -178,7 +178,7 @@ jobs:
             echo "::error::$UNSIGNED_APK is missing (a build that signs would be noticed here)"
             exit 1
           fi
-          args=(check --require-tools --apk "$UNSIGNED_APK" --deps "$RUNNER_TEMP/gradle.log" --generated build/gate/baseline.generated.json)
+          args=(check --require-tools --require-pin --apk "$UNSIGNED_APK" --deps "$RUNNER_TEMP/gradle.log" --generated build/gate/baseline.generated.json)
           if [ "$EVENT" = pull_request ]; then
             args+=(--compare-to .gate-base/gate/baseline.json)
           fi
