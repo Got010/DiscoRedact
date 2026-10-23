@@ -2,8 +2,6 @@
 
 package app.discoredact.ui.signin
 
-import android.content.Context
-import android.content.ContextWrapper
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -40,7 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import app.discoredact.core.executor.HeaderSet
 import app.discoredact.core.signin.SignInGrace
 import app.discoredact.core.signin.SignInHosts
@@ -52,7 +50,8 @@ private enum class Phase { Notice, Opening, Page, Ended }
 /**
  * Sign in on the phone (B34 Form A): Discord's own login page, behind the host filter, until one of its requests to
  * Discord's API carries the five headers. They are stored as a cURL import stores them; then everything the page
- * stored is deleted. Nothing loads before the tap; leaving the screen for any reason ends the page.
+ * stored is deleted. Nothing loads before the tap; leaving the screen ends the page, and the app going to the background
+ * ends it after a two-minute grace.
  */
 @Composable
 fun SignInScreen(vm: AppViewModel) {
@@ -187,7 +186,7 @@ private fun Page(
 ) {
     val context = LocalContext.current
     val page = remember { SignInPage(onBlocked, onStatus, onCaptured) }
-    val lifecycle = remember(context) { context.lifecycleOwner()?.lifecycle }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(page, lifecycle) {
         val main = Handler(Looper.getMainLooper())
         // When the app left the screen, on the elapsed-realtime clock (it runs in deep sleep); null while in front.
@@ -216,10 +215,10 @@ private fun Page(
             }
             Unit
         }
-        lifecycle?.addObserver(observer)
+        lifecycle.addObserver(observer)
         onDispose {
             main.removeCallbacks(endIfExpired)
-            lifecycle?.removeObserver(observer)
+            lifecycle.removeObserver(observer)
             val failed = page.end(context)
             if (failed.isNotEmpty()) onClearFailed(failed)
         }
@@ -227,12 +226,3 @@ private fun Page(
     AndroidView(factory = { c -> page.open(c) }, modifier = modifier)
 }
 
-/** The activity hosting the screen, as a lifecycle owner (LocalContext may be a wrapper around it). */
-private fun Context.lifecycleOwner(): LifecycleOwner? {
-    var c: Context? = this
-    while (c != null) {
-        if (c is LifecycleOwner) return c
-        c = (c as? ContextWrapper)?.baseContext
-    }
-    return null
-}
