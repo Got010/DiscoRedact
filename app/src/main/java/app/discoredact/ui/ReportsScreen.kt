@@ -87,7 +87,7 @@ fun ReportsScreen(vm: AppViewModel) {
                     Text("Leftovers export", style = MaterialTheme.typography.titleMedium)
                     Text(
                         "Leftovers are message IDs the app could not delete: IDs in spaces the alt can no longer reach (left group DMs, " +
-                            "deleted channels), and IDs Discord refused. Discord has reportedly deleted messages from a supplied ID list " +
+                            "deleted channels), and IDs Discord refused. A message you marked Keep is never listed. Discord has reportedly deleted messages from a supplied ID list " +
                             "sent to privacy@discord.com. That is unverified, so treat it as best effort.",
                     )
                     Text(
