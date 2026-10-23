@@ -15,6 +15,7 @@ import app.discoredact.core.model.ChannelState
 import app.discoredact.core.model.MessageStatus
 import app.discoredact.core.pacing.PacingConfig
 import app.discoredact.core.pacing.PacingPreset
+import app.discoredact.core.signin.SignInCapture
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.Dispatcher
 import mockwebserver3.MockResponse
@@ -249,6 +250,17 @@ class ExecutorNetTest {
             }
             for (r in store.runs.values) append(r.stopReason).append('\n')
             append(transport.toString()).append(TEST_HEADERS.toString())
+            // The sign-in capture (B34 Form A) builds the same set from a page's request: its results and failures
+            // print no value either.
+            val page = mapOf(
+                "Authorization" to TEST_HEADERS.authorization, "X-Super-Properties" to TEST_HEADERS.superProperties,
+                "X-Discord-Locale" to TEST_HEADERS.locale, "X-Discord-Timezone" to TEST_HEADERS.timezone,
+            )
+            for (h in listOf(page, page - "X-Discord-Locale", page + ("User-Agent" to "\u00e9"))) {
+                val o = SignInCapture.inspect("https://discord.com/api/v9/users/@me", h, TEST_HEADERS.userAgent, 0L)
+                append(o.toString()).append('\n')
+                if (o is SignInCapture.Outcome.Captured) append(o.headers.toString()).append('\n')
+            }
         }
         for (s in secrets) assertFalse("secret leaked", everything.contains(s))
         assertTrue(everything.isNotEmpty())

@@ -90,6 +90,39 @@ change in the set is therefore reviewed as such, with a note per entry. The buil
 files" lists every printable string with `://` in the unsigned APK, which is how a `hosts` note names the library
 behind each literal.
 
+## The sign-in screen's WebView
+
+From 0.2.0 the app shows Discord's login page in a WebView (`app/discoredact/ui/signin/`) to capture the five headers on
+the phone. The WebView is a platform API: no permission, component, dependency or native library comes with it. What
+the baseline gains:
+
+- `network_api`: the `android.webkit` types the sign-in page uses (`WebView`, `WebViewClient`, `WebSettings`,
+  `WebResourceRequest`, `WebResourceResponse`, `CookieManager`, `WebStorage`, `WebViewDatabase`,
+  `ServiceWorkerController`, `ServiceWorkerClient`, `ServiceWorkerWebSettings`, and any type their called methods'
+  signatures name, such as `ValueCallback`), each with a note; the CI run lists the exact set.
+- `hosts`: the WebView's own allowlist, `SignInHosts.HOSTS` in `:core` (`discord.com`, `discordapp.com`,
+  `discordapp.net`, `hcaptcha.com`), each with a note. The filter admits only https, these hosts and their subdomains,
+  with no port and no user info; everything else gets an empty 403. The app's own client keeps its one-host allowlist
+  (`HostAllowlist` in `:net`), which this list never reaches.
+
+`NoNetworkCodeTest` allows `android.webkit` and `WebView` in exactly `ui/signin/SignInSession.kt`, and `WebView` (as a
+directory name) in `data/SignInStorage.kt`, the WebView-free clearer that Wipe everything calls; every other main source
+of `:app` and `:core` still names no network API.
+
+Known limits of the WebView filter. The filter refuses every request the WebView API shows it; what the API does not
+show it, it cannot refuse or list under Blocked:
+
+- a WebSocket the page opens (Discord's login page may open its QR-login socket before sign-in, and the client opens
+  its gateway socket after it);
+- a redirect of a subresource or a fetch/XHR from an admitted host to another host (main-frame redirects do reach the
+  navigation check, which refuses them);
+- preconnect and DNS prefetch (lookups and handshakes with no request);
+- WebRTC (STUN/TURN over UDP), and WebTransport;
+- the WebView provider's own traffic (metrics, variations, component updates; off on GrapheneOS's Vanadium).
+
+Closing the page the moment the capture lands, whenever the screen is left, and two minutes after the app goes to the
+background, limits these; it does not prevent them. The app's own client never opens any of them.
+
 ## When the gate fails
 
 The log lists each difference as `GATE + field: value`, `GATE - field: value` or `GATE ~ field: old -> new`, then

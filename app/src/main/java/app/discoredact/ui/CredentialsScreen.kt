@@ -24,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,7 +39,8 @@ import app.discoredact.core.executor.CredentialState
 fun credentialSummary(s: CredentialState?): String = s?.describe(::formatTime) ?: "Checking the stored credentials."
 
 /**
- * Spec section 7: import by "Copy as cURL" from a desktop browser logged into the alt, or the five fields by hand;
+ * Spec section 7: sign in on the phone (B34 Form A, the sign-in screen), or import by "Copy as cURL" from a desktop
+ * browser logged into the alt, or the five fields by hand;
  * the status with its age and the 14-day staleness warning; wipe. Values are never shown back.
  */
 @Composable
@@ -52,6 +54,8 @@ fun CredentialsScreen(vm: AppViewModel) {
     var tz by remember { mutableStateOf(java.util.TimeZone.getDefault().id) }
     var confirmWipe by remember { mutableStateOf(false) }
     val status = vm.credentialState
+    val work by vm.workState.collectAsState()
+    val signInBlocked = vm.signInBlockedReason(work)
     Scaffold(topBar = { TopAppBar(title = { Text("Credentials") }, navigationIcon = { BackButton(vm) }) }) { pad ->
         Column(
             Modifier.padding(pad).padding(16.dp).fillMaxSize().verticalScroll(rememberScrollState()),
@@ -68,7 +72,21 @@ fun CredentialsScreen(vm: AppViewModel) {
             vm.credentialNotice?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
 
             HorizontalDivider()
-            Text("Import from \"Copy as cURL\"", style = MaterialTheme.typography.titleMedium)
+            Text("Sign in on this phone", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Opens Discord's own sign-in page in the app. Discord's page handles the password; the app copies only the five " +
+                    "headers from the page's own requests to Discord's API, then deletes everything the page stored.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Button(
+                onClick = { vm.go(Route.SignIn) },
+                enabled = signInBlocked == null && !vm.credentialsBusy,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Sign in here") }
+            signInBlocked?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+
+            HorizontalDivider()
+            Text("Or paste from a desktop browser", style = MaterialTheme.typography.titleMedium)
             Text(
                 "On a desktop browser logged into the alt: open the developer tools, Network panel, pick any request to Discord's API, " +
                     "right-click it, Copy > Copy as cURL, and paste it here. The paste is read once for its headers and not kept.",

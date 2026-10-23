@@ -12,7 +12,12 @@ executor rules; 11-20 are the owner's program-wide rules. Changing any rule here
    `DELETE https://discord.com/api/v9/channels/{channel_id}/messages/{message_id}`. No search, no `GET .../messages`,
    no history fetch, no gateway or websocket, no `POST /users/@me/channels`, no bulk delete, no edits, no guilds.
 2. **One host.** An OkHttp interceptor rejects any host but `discord.com`, and a test proves it. No analytics, crash
-   reporting or any SDK that phones home. The manifest declares no network permission beyond `INTERNET`.
+   reporting or any SDK that phones home. The manifest declares no network permission beyond `INTERNET`. The sign-in
+   screen's WebView has its own filter that admits only the hosts enumerated in `gate/baseline.json`, each with a note,
+   and refuses every request it is shown; what the WebView API does not show it (a WebSocket the page opens, a redirect
+   of a subresource to another host, preconnect and DNS prefetch, WebRTC) it cannot refuse, which closing the page at
+   the capture limits but does not prevent; it exists only to capture the five headers and is cleared after each
+   capture.
 3. **One request in flight, always.** One worker, sequential, no parallelism, no "fast mode", no second account.
 4. **Message IDs come only from the data package.** The importer reads only ZIP entries under `messages/`
    (case-insensitive) and never `account/`, `activity/`, `servers/`, `ads/` or support tickets. Guild channels are skipped.
@@ -23,9 +28,12 @@ executor rules; 11-20 are the owner's program-wide rules. Changing any rule here
    the rolling 10-minute invalid-response counter (401, 403, 429 except scope `shared`) halts the run at 5.
 8. **Halt, never work around:** 401, a `captcha_key` in the body, a non-JSON or HTML body (edge block, manual resume after
    at least an hour), any unknown 4xx. No automatic captcha solving, ever.
-9. **Secrets.** Token and headers live only encrypted (Android Keystore, AES-GCM). `Authorization` never appears in a log,
-   an event row, an exception message, a report or a test fixture; a test proves it. `android:allowBackup="false"`,
-   data excluded from device transfer. Captured headers are sent verbatim, never fabricated or randomised.
+9. **Secrets.** Token and headers live only encrypted (Android Keystore, AES-GCM). `Authorization` never appears in a
+   log, an event row, an exception message, a report or a test fixture; a test proves it. `android:allowBackup="false"`,
+   data excluded from device transfer. Captured headers are sent verbatim, never fabricated or randomised. The WebView's
+   cookies, storage and cache hold the session only while the sign-in screen is open (about two minutes after the app
+   leaves the screen; if the phone sleeps through that, at the next wake; if the app is killed, at its next start); they
+   are cleared when the capture ends and by Wipe everything, and are never logged or exported.
 10. **Dry run** defaults ON until one dry run has completed. The final review (exact counts, the frozen list,
     hold-to-confirm) is the last checkpoint before any irreversible delete.
 

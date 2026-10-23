@@ -321,6 +321,54 @@
       "note": "OkHttp 5.1.0's Android platform TLS (socket configuration); no connection by itself"
     },
     {
+      "value": "Landroid/webkit/CookieManager;",
+      "note": "The sign-in screen's WebView (B34 Form A, CLAUDE.md rules 2 and 9): Discord's own login page behind the app's host filter (SignInHosts, four hosts, https only), used only to copy the five session headers from the page's requests; the page is cleared and destroyed after each capture; the app runs no script in it. Third-party cookies off; removeAllCookies and flush in the clear after each capture. Never read."
+    },
+    {
+      "value": "Landroid/webkit/ServiceWorkerClient;",
+      "note": "The sign-in screen's WebView (B34 Form A, CLAUDE.md rules 2 and 9): Discord's own login page behind the app's host filter (SignInHosts, four hosts, https only), used only to copy the five session headers from the page's requests; the page is cleared and destroyed after each capture; the app runs no script in it. The service-worker request filter (the same SignInHosts check; refuses everything when no page is open)."
+    },
+    {
+      "value": "Landroid/webkit/ServiceWorkerController;",
+      "note": "The sign-in screen's WebView (B34 Form A, CLAUDE.md rules 2 and 9): Discord's own login page behind the app's host filter (SignInHosts, four hosts, https only), used only to copy the five session headers from the page's requests; the page is cleared and destroyed after each capture; the app runs no script in it. A service worker's requests bypass the page's client, so the same host filter is installed for them; file and content access off."
+    },
+    {
+      "value": "Landroid/webkit/ServiceWorkerWebSettings;",
+      "note": "The sign-in screen's WebView (B34 Form A, CLAUDE.md rules 2 and 9): Discord's own login page behind the app's host filter (SignInHosts, four hosts, https only), used only to copy the five session headers from the page's requests; the page is cleared and destroyed after each capture; the app runs no script in it. File and content access off for service workers."
+    },
+    {
+      "value": "Landroid/webkit/ValueCallback;",
+      "note": "The sign-in screen's WebView (B34 Form A, CLAUDE.md rules 2 and 9): Discord's own login page behind the app's host filter (SignInHosts, four hosts, https only), used only to copy the five session headers from the page's requests; the page is cleared and destroyed after each capture; the app runs no script in it. The (null) callback type of CookieManager.removeAllCookies."
+    },
+    {
+      "value": "Landroid/webkit/WebResourceRequest;",
+      "note": "The sign-in screen's WebView (B34 Form A, CLAUDE.md rules 2 and 9): Discord's own login page behind the app's host filter (SignInHosts, four hosts, https only), used only to copy the five session headers from the page's requests; the page is cleared and destroyed after each capture; the app runs no script in it. The request the filter judges (URL) and the capture reads (headers); the map is read once and dropped."
+    },
+    {
+      "value": "Landroid/webkit/WebResourceResponse;",
+      "note": "The sign-in screen's WebView (B34 Form A, CLAUDE.md rules 2 and 9): Discord's own login page behind the app's host filter (SignInHosts, four hosts, https only), used only to copy the five session headers from the page's requests; the page is cleared and destroyed after each capture; the app runs no script in it. The empty 403 returned for every refused request; no body, no network."
+    },
+    {
+      "value": "Landroid/webkit/WebSettings;",
+      "note": "The sign-in screen's WebView (B34 Form A, CLAUDE.md rules 2 and 9): Discord's own login page behind the app's host filter (SignInHosts, four hosts, https only), used only to copy the five session headers from the page's requests; the page is cleared and destroyed after each capture; the app runs no script in it. JavaScript and DOM storage on (the login page needs them), file and content access off, mixed content never, geolocation off, safe browsing off, no multiple windows."
+    },
+    {
+      "value": "Landroid/webkit/WebStorage;",
+      "note": "The sign-in screen's WebView (B34 Form A, CLAUDE.md rules 2 and 9): Discord's own login page behind the app's host filter (SignInHosts, four hosts, https only), used only to copy the five session headers from the page's requests; the page is cleared and destroyed after each capture; the app runs no script in it. deleteAllData in the clear after each capture."
+    },
+    {
+      "value": "Landroid/webkit/WebView;",
+      "note": "The sign-in screen's WebView (B34 Form A, CLAUDE.md rules 2 and 9): Discord's own login page behind the app's host filter (SignInHosts, four hosts, https only), used only to copy the five session headers from the page's requests; the page is cleared and destroyed after each capture; the app runs no script in it. The view itself (SignInSession.kt, the one file naming android.webkit)."
+    },
+    {
+      "value": "Landroid/webkit/WebViewClient;",
+      "note": "The sign-in screen's WebView (B34 Form A, CLAUDE.md rules 2 and 9): Discord's own login page behind the app's host filter (SignInHosts, four hosts, https only), used only to copy the five session headers from the page's requests; the page is cleared and destroyed after each capture; the app runs no script in it. shouldInterceptRequest and shouldOverrideUrlLoading: every request and navigation goes through the host filter; the capture reads request headers of requests under https://discord.com/api/."
+    },
+    {
+      "value": "Landroid/webkit/WebViewDatabase;",
+      "note": "The sign-in screen's WebView (B34 Form A, CLAUDE.md rules 2 and 9): Discord's own login page behind the app's host filter (SignInHosts, four hosts, https only), used only to copy the five session headers from the page's requests; the page is cleared and destroyed after each capture; the app runs no script in it. clearHttpAuthUsernamePassword in the clear after each capture."
+    },
+    {
       "value": "Ljava/net/ConnectException;",
       "note": "OkHttp 5.1.0's TLS/socket classes for the one client's connection to discord.com (CLAUDE.md rules 1-2); the host allowlist refuses any other host before any of this runs"
     },
@@ -586,7 +634,19 @@
   "hosts": [
     {
       "value": "discord.com",
-      "note": "The allowlist's allowed-host constant (HostAllowlist.DISCORD_HOST); the only host the app is allowed to contact. The app builds URLs only under https://discord.com/api/v9"
+      "note": "The allowlist's allowed-host constant (HostAllowlist.DISCORD_HOST); the only host the app is allowed to contact. The app builds URLs only under https://discord.com/api/v9. Also the sign-in screen's WebView filter (SignInHosts.HOSTS) and the capture's API host (SignInCapture.API_HOST), B34 Form A"
+    },
+    {
+      "value": "discordapp.com",
+      "note": "The sign-in screen's WebView filter (SignInHosts.HOSTS, B34 Form A): Discord's own CDN host (cdn.discordapp.com: avatars and icons the login page shows); admitted with its subdomains for the page only, never by the app's own client, whose allowlist stays discord.com alone"
+    },
+    {
+      "value": "discordapp.net",
+      "note": "The sign-in screen's WebView filter (SignInHosts.HOSTS, B34 Form A): Discord's own media host (media.discordapp.net, images.discordapp.net); admitted with its subdomains for the page only, never by the app's own client"
+    },
+    {
+      "value": "hcaptcha.com",
+      "note": "The sign-in screen's WebView filter (SignInHosts.HOSTS, B34 Form A): the captcha Discord's login may show (hCaptcha's frames, scripts and images); admitted with its subdomains for the page only, never by the app's own client"
     },
     {
       "value": "https://developer.android.com",
@@ -594,7 +654,7 @@
     },
     {
       "value": "https://discord.com",
-      "note": "The one endpoint (CLAUDE.md rule 1): DiscordTransport.PRODUCTION_BASE_URL (https://discord.com/api/v9), the Origin header and the Referer prefix; the only host the allowlist admits"
+      "note": "The one endpoint (CLAUDE.md rule 1): DiscordTransport.PRODUCTION_BASE_URL (https://discord.com/api/v9), the Origin header and the Referer prefix; the only host the allowlist admits; also the sign-in page the WebView loads (SignInHosts.LOGIN_PAGE, https://discord.com/login), B34 Form A"
     },
     {
       "value": "https://goo.gle",

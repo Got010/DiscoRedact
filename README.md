@@ -19,8 +19,24 @@ next message), the dry run, the Run screen, and the one OkHttp client with its `
 the credential import ("Copy as cURL" from a desktop browser, or the five fields by hand), the Keystore AES-GCM store,
 the capture age with the 14-day staleness warning, and the wipe; the canary (5 real deletes, verified in the client)
 passed. Milestone 4: the Reports screen, the leftovers CSV export, the fuller wipe, and signed releases on GitHub
-Releases (see Releases below). Next, by the owner's card: a sign-in on the phone itself, so the capture needs no
-desktop.
+Releases (see Releases below). 0.2.0: the sign-in on the phone itself, so the capture needs no desktop (below).
+
+## Signing in on the phone
+
+Credentials, "Sign in here" opens Discord's own login page in a WebView inside the app. Discord's page handles the
+password, any second factor and any captcha; the app never sees the password. The page may load only over https from
+`discord.com`, `discordapp.com`, `discordapp.net` and `hcaptcha.com` (and their subdomains); every other request is
+refused and its host name is listed on the screen under "Blocked". When one of the page's own requests to
+`https://discord.com/api/` carries the five headers (`Authorization`, `User-Agent`, `X-Super-Properties`,
+`X-Discord-Locale`, `X-Discord-Timezone`), the app stores them in the same Keystore-encrypted store as a cURL import,
+then clears everything the page stored (cookies, site storage, cache, history, form data) and destroys the WebView.
+The same clear runs on Close, whenever the screen is left, and two minutes after the app goes to the background (time
+to read a code in another app; coming back sooner keeps the page; if the phone sleeps through the two minutes, the
+page ends at the next wake, and if the app is killed, its data goes at the next start); Wipe everything also deletes
+the WebView's data directories, and a page never loads over data an earlier one left that could not be deleted. "Sign
+in here" is off while a run is active or a wipe is running. The filter's known limits are in `gate/README.md`. The app runs no script
+in the page and reads request headers only. The executor, the transport and its `discord.com` allowlist are unchanged:
+deletes still go through the app's own client. The cURL paste stays as the fallback.
 
 ## Layout
 

@@ -8,6 +8,7 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
+import app.discoredact.ui.signin.SignInScreen
 
 @Composable
 fun DiscoRedactApp(vm: AppViewModel = viewModel()) {
@@ -25,6 +26,7 @@ fun DiscoRedactApp(vm: AppViewModel = viewModel()) {
             Route.Settings -> SettingsScreen(vm)
             Route.Run -> RunScreen(vm)
             Route.Credentials -> CredentialsScreen(vm)
+            Route.SignIn -> SignInScreen(vm)
             Route.Reports -> ReportsScreen(vm)
         }
     }
