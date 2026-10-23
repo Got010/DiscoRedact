@@ -5,7 +5,9 @@
 # schemes), and uploads that test copy for the owner's phone checks only.
 #
 # Only a push to main can sign or publish, and only for a VERSION that has no release yet (the VERSION file at the repo
-# root; bumping it is a release). The jobs after the build, in order:
+# root; bumping it is a release). Once a version is released, a merge that keeps it ends in plan with a notice and
+# publishes nothing; the merge that adds this release workflow (VERSION 0.1.0, no release yet) releases v0.1.0. The
+# jobs after the build, in order:
 #   plan           reads the build's version, decides whether it needs publishing; no checkout.
 #   sign           the only job that references a secret; environment publish (the owner approves). It checks out
 #                  nothing and runs no repository code: GitHub's own actions, gh and the runner's Android SDK tools.
@@ -536,6 +538,13 @@ jobs:
             echo "::error::Expected exactly one app-release.apk in the sign job's signed-apk artifact, found ${#found[@]}."
             exit 1
           fi
+          # gate.py takes the apksigner named by APKSIGNER; without it, it would use the newest build-tools directory.
+          APKSIGNER="$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner"
+          if [ ! -x "$APKSIGNER" ]; then
+            echo "::error::$APKSIGNER is not on this runner (BUILD_TOOLS_VERSION $BUILD_TOOLS_VERSION)."
+            exit 1
+          fi
+          export APKSIGNER
           python3 gate/gate.py cert --require-pin --apk "${found[0]}"
           echo "apk_sha256=$(sha256sum "${found[0]}" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
@@ -618,10 +627,16 @@ jobs:
           uninstalled first.
           EOF
 
-          flags=()
-          case "$TAG" in *-*) flags+=(--prerelease) ;; esac
-          # A release older than the newest one must not become "Latest".
-          newest=$( { gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName --jq '.[].tagName'; echo "$TAG"; } | sort -V | tail -n 1)
-          [ "$newest" = "$TAG" ] || flags+=(--latest=false)
+          # The approval waits can take hours: if the tag appeared meanwhile, gh would attach the release to it and
+          # ignore --target, so it must still be absent (HTTP 404) right before the release is created.
+          if tagout=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" 2>&1); then
+            echo "::error::The tag $TAG now exists, so the release is not created. The owner decides how to clear it."
+            exit 1
+          fi
+          if ! grep -q 'HTTP 404' <<< "$tagout"; then
+            echo "::error::Could not tell whether the tag $TAG exists: $tagout"
+            exit 1
+          fi
+          # No --prerelease or --latest=false: plan only lets a strict X.Y.Z through, and only the highest version.
           gh release create "$TAG" "$out" --repo "$GITHUB_REPOSITORY" --target "$TARGET" \
-            --title "DiscoRedact $TAG" --notes-file notes.md "${flags[@]}"
+            --title "DiscoRedact $TAG" --notes-file notes.md
