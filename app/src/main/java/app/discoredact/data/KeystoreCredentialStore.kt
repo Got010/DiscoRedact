@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import app.discoredact.core.executor.CredentialCodec
+import app.discoredact.core.executor.CredentialState
 import app.discoredact.core.executor.CredentialStatus
 import app.discoredact.core.executor.CredentialStore
 import app.discoredact.core.executor.HeaderSet
@@ -23,22 +24,33 @@ class KeystoreCredentialStore(context: Context, private val clock: () -> Long = 
     private val file = File(context.applicationContext.filesDir, FILE)
     private val lock = Any()
 
-    override fun load(): HeaderSet? = synchronized(lock) {
+    override fun load(): HeaderSet? = (read() as? Read.Ok)?.headers
+
+    /** What [read] found; a failure carries no detail, so nothing here can leak a value. */
+    private sealed interface Read {
+        data object Missing : Read
+        data object Unreadable : Read
+        class Ok(val headers: HeaderSet) : Read
+    }
+
+    private fun read(): Read = synchronized(lock) {
         val bytes = try {
-            if (!file.exists()) return null
+            if (!file.exists()) return Read.Missing
             file.readBytes()
         } catch (_: Exception) {
-            return null
+            return Read.Unreadable
         }
-        if (bytes.size <= IV_BYTES) return null
+        if (bytes.size <= IV_BYTES) return Read.Unreadable
         val plain = try {
             val cipher = Cipher.getInstance(TRANSFORM)
-            cipher.init(Cipher.DECRYPT_MODE, key(create = false) ?: return null, GCMParameterSpec(TAG_BITS, bytes, 0, IV_BYTES))
+            cipher.init(Cipher.DECRYPT_MODE, key(create = false) ?: return Read.Unreadable, GCMParameterSpec(TAG_BITS, bytes, 0, IV_BYTES))
             cipher.doFinal(bytes, IV_BYTES, bytes.size - IV_BYTES)
         } catch (_: Exception) {
-            return null
+            return Read.Unreadable
         }
-        CredentialCodec.decode(plain).also { plain.fill(0) }
+        val headers = CredentialCodec.decode(plain)
+        plain.fill(0)
+        if (headers == null) Read.Unreadable else Read.Ok(headers)
     }
 
     /** Encrypts and writes the set; a new IV every time. */
@@ -58,17 +70,30 @@ class KeystoreCredentialStore(context: Context, private val clock: () -> Long = 
         }
     }
 
-    /** Deletes the ciphertext and the key. */
-    fun wipe() = synchronized(lock) {
+    /** Deletes the ciphertext and the key. True only when the file is gone and the key entry is gone. */
+    fun wipe(): Boolean = synchronized(lock) {
         file.delete()
-        File(file.parentFile, "$FILE.tmp").delete()
-        try {
+        val tmp = File(file.parentFile, "$FILE.tmp")
+        tmp.delete()
+        val keyGone = try {
             keyStore().deleteEntry(ALIAS)
+            !keyStore().containsAlias(ALIAS)
         } catch (_: Exception) {
+            false
         }
+        keyGone && !file.exists() && !tmp.exists()
     }
 
-    fun status(): CredentialStatus? = load()?.let { CredentialStatus(it.capturedAt, clock() - it.capturedAt) }
+    /**
+     * None (no file), Unreadable (a file that cannot be decrypted: the Keystore key is gone or invalidated, or the file
+     * is damaged) or Present with the capture time and age. [load] returns null for the first two, so a real run
+     * never starts on an unreadable set.
+     */
+    fun status(): CredentialState = when (val r = read()) {
+        Read.Missing -> CredentialState.None
+        Read.Unreadable -> CredentialState.Unreadable
+        is Read.Ok -> CredentialState.Present(CredentialStatus(r.headers.capturedAt, clock() - r.headers.capturedAt))
+    }
 
     private fun keyStore(): KeyStore = KeyStore.getInstance(PROVIDER).apply { load(null) }
 

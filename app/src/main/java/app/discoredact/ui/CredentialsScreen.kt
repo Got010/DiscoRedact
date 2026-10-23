@@ -32,14 +32,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import app.discoredact.core.executor.CredentialStatus
+import app.discoredact.core.executor.CredentialState
 
-/** The status line of the Credentials screen and the frozen screen: when captured, how old, stale or not. Never a value. */
-fun credentialSummary(s: CredentialStatus?): String = when {
-    s == null -> "No credentials stored."
-    s.stale -> "Captured ${formatTime(s.capturedAt)}, ${s.ageDays} days ago: STALE (over 14 days; the client build in the headers no longer matches a live session). Capture again before a real run."
-    else -> "Captured ${formatTime(s.capturedAt)}, ${s.ageDays} days ago."
-}
+/** The status line of the Credentials screen, the Settings screen and the frozen screen. Never a value. */
+fun credentialSummary(s: CredentialState?): String = s?.describe(::formatTime) ?: "Checking the stored credentials."
 
 /**
  * Spec section 7: import by "Copy as cURL" from a desktop browser logged into the alt, or the five fields by hand;
@@ -55,14 +51,15 @@ fun CredentialsScreen(vm: AppViewModel) {
     var locale by remember { mutableStateOf("en-US") }
     var tz by remember { mutableStateOf(java.util.TimeZone.getDefault().id) }
     var confirmWipe by remember { mutableStateOf(false) }
-    val status = vm.credentialStatus
+    val status = vm.credentialState
     Scaffold(topBar = { TopAppBar(title = { Text("Credentials") }, navigationIcon = { BackButton(vm) }) }) { pad ->
         Column(
             Modifier.padding(pad).padding(16.dp).fillMaxSize().verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("Status", style = MaterialTheme.typography.titleMedium)
-            Text(credentialSummary(status), color = if (status?.stale == true) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+            val warn = status is CredentialState.Unreadable || (status is CredentialState.Present && status.status.stale)
+            Text(credentialSummary(status), color = if (warn) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
             Text(
                 "Stored encrypted under a key in the phone's Keystore; never logged, never backed up, never shown here. " +
                     "A real run sends these five headers exactly as captured, nothing else.",
@@ -111,7 +108,7 @@ fun CredentialsScreen(vm: AppViewModel) {
             Text("Removes the stored headers and their key from this phone. Log out of the browser session as well: that invalidates the token wherever it was copied.", style = MaterialTheme.typography.bodySmall)
             OutlinedButton(
                 onClick = { confirmWipe = true },
-                enabled = status != null && !vm.credentialsBusy,
+                enabled = status?.wipeable == true && !vm.credentialsBusy,
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Wipe credentials") }

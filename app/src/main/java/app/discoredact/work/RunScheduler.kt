@@ -41,6 +41,11 @@ class RunScheduler(context: Context) {
         wm.cancelUniqueWork(UNIQUE)
     }
 
+    /** Removes the finished work records WorkManager keeps (after "Wipe everything", so no run number outlives it). */
+    fun prune() {
+        wm.pruneWork()
+    }
+
     /** Whether a worker for the run is enqueued or running. */
     fun observeActive(): Flow<WorkState> = wm.getWorkInfosForUniqueWorkFlow(UNIQUE).map { infos ->
         val info = infos.firstOrNull { !it.state.isFinished }

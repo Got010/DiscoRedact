@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.discoredact.core.executor.CredentialState
 
 @Composable
 fun ReviewScreen(vm: AppViewModel) {
@@ -130,14 +131,16 @@ fun FrozenScreen(vm: AppViewModel, r: Route.Frozen) {
                 Switch(checked = settings.oldestFirst, onCheckedChange = { vm.setOldestFirst(it) })
             }
             if (!settings.dryRun) {
-                val cred = vm.credentialStatus
+                val cred = vm.credentialState
+                val present = (cred as? CredentialState.Present)?.status
                 Text(
                     when {
-                        cred == null -> "A real run needs the captured headers of the alt's browser session, and none are stored. Import them on the Credentials screen (Settings) first; a real run without them sends nothing."
-                        cred.stale -> "The stored credentials are over 14 days old (captured ${cred.ageDays} days ago). Capture again before a real run."
-                        else -> "Credentials captured ${cred.ageDays} days ago. A real run deletes for real, one request at a time."
+                        cred is CredentialState.Unreadable -> "The stored credentials cannot be read (the phone's key changed or the file is damaged). A real run sends nothing. Wipe them on the Credentials screen (Settings), then capture again."
+                        present == null -> "A real run needs the captured headers of the alt's browser session, and none are stored. Import them on the Credentials screen (Settings) first; a real run without them sends nothing."
+                        present.stale -> "The stored credentials are over 14 days old (captured ${present.ageDays} days ago). Capture again before a real run."
+                        else -> "Credentials captured ${present.ageDays} days ago. A real run deletes for real, one request at a time."
                     },
-                    color = if (cred?.stale != false) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                    color = if (present?.stale != false) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
                     style = MaterialTheme.typography.bodySmall,
                 )
             }

@@ -75,6 +75,7 @@ fun ChannelsScreen(vm: AppViewModel) {
                 actions = {
                     val runCount by vm.runCount.collectAsState()
                     if (runCount > 0) TextButton(onClick = { vm.go(Route.Run) }) { Text("Run") }
+                    if (!summaries.isNullOrEmpty()) TextButton(onClick = { vm.go(Route.Reports) }) { Text("Reports") }
                     TextButton(onClick = { vm.go(Route.Import) }) { Text("Import") }
                     IconButton(onClick = { vm.go(Route.Settings) }) { Icon(Icons.Filled.Settings, contentDescription = "Settings") }
                 },
