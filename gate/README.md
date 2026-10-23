@@ -120,8 +120,8 @@ show it, it cannot refuse or list under Blocked:
 - WebRTC (STUN/TURN over UDP), and WebTransport;
 - the WebView provider's own traffic (metrics, variations, component updates; off on GrapheneOS's Vanadium).
 
-Closing the page the moment the capture lands, and whenever the screen is left or the app goes to the background,
-limits these; it does not prevent them. The app's own client never opens any of them.
+Closing the page the moment the capture lands, whenever the screen is left, and two minutes after the app goes to the
+background, limits these; it does not prevent them. The app's own client never opens any of them.
 
 ## When the gate fails
 

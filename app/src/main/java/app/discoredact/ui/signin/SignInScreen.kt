@@ -4,6 +4,9 @@ package app.discoredact.ui.signin
 
 import android.content.Context
 import android.content.ContextWrapper
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -39,6 +42,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import app.discoredact.core.executor.HeaderSet
+import app.discoredact.core.signin.SignInGrace
 import app.discoredact.core.signin.SignInHosts
 import app.discoredact.ui.AppViewModel
 import kotlinx.coroutines.launch
@@ -111,7 +115,7 @@ fun SignInScreen(vm: AppViewModel) {
                         phase = Phase.Ended
                         status = "Nothing was captured."
                         endText = listOfNotNull(
-                            "The page was closed because the app left the screen; start again.",
+                            "The page was closed after two minutes in the background; start again.",
                             failed.takeIf { it.isNotEmpty() }?.let { vm.signInClearNote(it) },
                         ).joinToString(" ")
                     },
@@ -157,10 +161,9 @@ private fun Notice(onLoad: () -> Unit) {
             style = MaterialTheme.typography.bodyMedium,
         )
         Text(
-            "When the capture ends, when you close this screen, or when the app leaves the screen (home, another app, " +
-                "the screen turning off), the page is closed and everything it stored (cookies, site storage, cache, " +
-                "history, form data) is deleted. If your second-factor code comes from an app on this phone, open that " +
-                "app in split screen rather than switching to it. Nothing loads before you tap the button.",
+            "When the capture ends or when you close this screen, the page is closed and everything it stored (cookies, " +
+                "site storage, cache, history, form data) is deleted. If you need a code from another app, you have two " +
+                "minutes: the page is closed after two minutes in the background. Nothing loads before you tap the button.",
             style = MaterialTheme.typography.bodyMedium,
         )
         Button(onClick = onLoad, modifier = Modifier.fillMaxWidth()) { Text("Load the sign-in page") }
@@ -168,8 +171,10 @@ private fun Notice(onLoad: () -> Unit) {
 }
 
 /**
- * The page itself. Leaving composition for any reason (Close, back, rotation) ends it, and so does the app leaving the
- * screen (ON_STOP: home, another app, the screen turning off), which ends it at once rather than at the next frame.
+ * The page itself. Leaving composition for any reason (Close, back, rotation) ends it. When the app leaves the screen
+ * (ON_STOP: home, another app, the screen turning off) the page lives on for [SignInGrace.GRACE_MS], so a code can be
+ * read in another app, and is then ended; coming back in time (ON_START) cancels that. A capture in the grace stores
+ * normally.
  */
 @Composable
 private fun Page(
@@ -184,11 +189,36 @@ private fun Page(
     val page = remember { SignInPage(onBlocked, onStatus, onCaptured) }
     val lifecycle = remember(context) { context.lifecycleOwner()?.lifecycle }
     DisposableEffect(page, lifecycle) {
+        val main = Handler(Looper.getMainLooper())
+        // When the app left the screen, on the elapsed-realtime clock (it runs in deep sleep); null while in front.
+        var stoppedAt: Long? = null
+        // The one pending end: posted on ON_STOP, removed on ON_START, ON_RESUME and disposal. Handler time stops in
+        // deep sleep, so coming back also checks the clock and ends a page whose grace ran out while the phone slept.
+        val endIfExpired = Runnable {
+            if (page.isOpen && SignInGrace.expired(stoppedAt, SystemClock.elapsedRealtime())) {
+                stoppedAt = null
+                onBackground(page.end(context))
+            }
+        }
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP && page.isOpen) onBackground(page.end(context))
+            when (event) {
+                Lifecycle.Event.ON_STOP -> if (page.isOpen) {
+                    stoppedAt = SystemClock.elapsedRealtime()
+                    main.removeCallbacks(endIfExpired)
+                    main.postDelayed(endIfExpired, SignInGrace.GRACE_MS)
+                }
+                Lifecycle.Event.ON_START, Lifecycle.Event.ON_RESUME -> {
+                    main.removeCallbacks(endIfExpired)
+                    endIfExpired.run()
+                    stoppedAt = null
+                }
+                else -> Unit
+            }
+            Unit
         }
         lifecycle?.addObserver(observer)
         onDispose {
+            main.removeCallbacks(endIfExpired)
             lifecycle?.removeObserver(observer)
             val failed = page.end(context)
             if (failed.isNotEmpty()) onClearFailed(failed)

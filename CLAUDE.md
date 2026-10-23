@@ -28,11 +28,11 @@ executor rules; 11-20 are the owner's program-wide rules. Changing any rule here
    the rolling 10-minute invalid-response counter (401, 403, 429 except scope `shared`) halts the run at 5.
 8. **Halt, never work around:** 401, a `captcha_key` in the body, a non-JSON or HTML body (edge block, manual resume after
    at least an hour), any unknown 4xx. No automatic captcha solving, ever.
-9. **Secrets.** Token and headers live only encrypted (Android Keystore, AES-GCM). `Authorization` never appears in a log,
-   an event row, an exception message, a report or a test fixture; a test proves it. `android:allowBackup="false"`,
+9. **Secrets.** Token and headers live only encrypted (Android Keystore, AES-GCM). `Authorization` never appears in a
+   log, an event row, an exception message, a report or a test fixture; a test proves it. `android:allowBackup="false"`,
    data excluded from device transfer. Captured headers are sent verbatim, never fabricated or randomised. The WebView's
-   cookies, storage and cache hold the session only while the sign-in screen is open; they are cleared when the capture
-   ends and by Wipe everything, and are never logged or exported.
+   cookies, storage and cache hold the session only while the sign-in screen is open (at most two minutes after the app
+   leaves the screen); they are cleared when the capture ends and by Wipe everything, and are never logged or exported.
 10. **Dry run** defaults ON until one dry run has completed. The final review (exact counts, the frozen list,
     hold-to-confirm) is the last checkpoint before any irreversible delete.
 
