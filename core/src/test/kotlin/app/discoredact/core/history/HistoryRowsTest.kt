@@ -93,7 +93,8 @@ class HistoryRowsTest {
         assertEquals(PageResult.Bad(notJson = true), HistoryRows.own(ME, 10, "[{\"id\":"))
         assertEquals(PageResult.Bad(notJson = false), HistoryRows.own(ME, 10, """{"message":"x","code":0}"""))
         assertEquals(PageResult.Bad(notJson = false), HistoryRows.own(ME, 10, ""))
-        assertEquals(PageResult.Bad(notJson = false), HistoryRows.own(ME, 10, "42"))
+        assertEquals(PageResult.Bad(notJson = true), HistoryRows.own(ME, 10, "42"))
+        assertEquals(PageResult.Bad(notJson = true), HistoryRows.own(ME, 10, "<html>cf</html>"))
         assertEquals(PageResult.Bad(notJson = true), HistoryRows.own(ME, 10, "[".repeat(100_000)))
     }
 

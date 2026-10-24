@@ -37,11 +37,14 @@ sealed interface PageResult {
 internal object ReadBodies {
     private val json = Json { ignoreUnknownKeys = true; isLenient = false }
 
-    /** The parsed body, or null when it is blank or not JSON. */
+    /**
+     * The parsed body, or null when it is blank or not a JSON object or array. Discord's API answers with one of the two;
+     * a bare primitive is not an answer (the parser reads an unquoted word such as `<html>cf</html>` as one).
+     */
     fun parse(body: String): JsonElement? {
         if (body.isBlank()) return null
         return try {
-            json.parseToJsonElement(body)
+            json.parseToJsonElement(body).takeIf { it is JsonObject || it is JsonArray }
         } catch (_: Exception) {
             null
         } catch (_: StackOverflowError) {
