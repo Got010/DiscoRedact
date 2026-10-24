@@ -101,6 +101,9 @@ class SignInPage(
     private var webView: WebView? = null
     private var openedIn: Context? = null
 
+    /** Main thread: the failed clear steps of an end nobody has reported yet (a gone renderer); the next [end] returns them. */
+    private var unreported: List<String> = emptyList()
+
     /** Main thread only: true from [open] until [end]. */
     val isOpen: Boolean get() = webView != null
 
@@ -157,14 +160,18 @@ class SignInPage(
                 status(PageStatus.Failed("HTTP ${errorResponse.statusCode}"))
             }
 
-            // Returning true keeps the app alive when the WebView's renderer is gone. The page is ended at once (the
-            // dead view is cleared and destroyed; Close disposes it), and the screen says so; main thread.
+            // Returning true keeps the app alive when the WebView's renderer is gone. Everything is refused from now on;
+            // the page is ended (cleared and destroyed) once this callback has returned, not from inside it, and the
+            // screen says so. The clear's failed steps are kept for the next [end] (Close), which reports them.
             override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
-                if (ended.get()) return true
+                if (ended.getAndSet(true)) return true
                 documentFailed = true
                 val what = if (detail.didCrash()) "the page's renderer crashed" else "the page's renderer was stopped by the system"
-                openedIn?.let { end(it) }
-                onStatus(PageStatus.Failed(what))
+                main.post {
+                    val context = openedIn
+                    if (context != null) unreported = end(context)
+                    onStatus(PageStatus.Failed(what))
+                }
                 return true
             }
         }
@@ -185,7 +192,7 @@ class SignInPage(
     fun end(context: Context): List<String> {
         ended.set(true)
         if (current === this) current = null
-        val view = webView ?: return emptyList()
+        val view = webView ?: return unreported.also { unreported = emptyList() }
         webView = null
         openedIn = null
         return SignInSession.clear(view, context)
