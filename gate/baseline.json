@@ -325,6 +325,10 @@
       "note": "The sign-in screen's WebView (B34 Form A, CLAUDE.md rules 2 and 9): Discord's own login page behind the app's host filter (SignInHosts, four hosts, https only), used only to copy the five session headers from the page's requests; the page is cleared and destroyed after each capture; the app runs no script in it. Third-party cookies off; removeAllCookies and flush in the clear after each capture. Never read."
     },
     {
+      "value": "Landroid/webkit/RenderProcessGoneDetail;",
+      "note": "The sign-in screen's WebView (B34 Form A, CLAUDE.md rules 2 and 9): Discord's own login page behind the app's host filter (SignInHosts, four hosts, https only), used only to copy the five session headers from the page's requests; the page is cleared and destroyed after each capture; the app runs no script in it. The page-load callbacks of 0.2.1: tells the screen that the WebView's renderer crashed or was stopped, so the status line can say the page did not load (names only) and the app stays alive; nothing is read from the page."
+    },
+    {
       "value": "Landroid/webkit/ServiceWorkerClient;",
       "note": "The sign-in screen's WebView (B34 Form A, CLAUDE.md rules 2 and 9): Discord's own login page behind the app's host filter (SignInHosts, four hosts, https only), used only to copy the five session headers from the page's requests; the page is cleared and destroyed after each capture; the app runs no script in it. The service-worker request filter (the same SignInHosts check; refuses everything when no page is open)."
     },
@@ -339,6 +343,10 @@
     {
       "value": "Landroid/webkit/ValueCallback;",
       "note": "The sign-in screen's WebView (B34 Form A, CLAUDE.md rules 2 and 9): Discord's own login page behind the app's host filter (SignInHosts, four hosts, https only), used only to copy the five session headers from the page's requests; the page is cleared and destroyed after each capture; the app runs no script in it. The (null) callback type of CookieManager.removeAllCookies."
+    },
+    {
+      "value": "Landroid/webkit/WebResourceError;",
+      "note": "The sign-in screen's WebView (B34 Form A, CLAUDE.md rules 2 and 9): Discord's own login page behind the app's host filter (SignInHosts, four hosts, https only), used only to copy the five session headers from the page's requests; the page is cleared and destroyed after each capture; the app runs no script in it. The page-load callbacks of 0.2.1: the main document's load error (code and Chromium's error name, filtered to printable ASCII and cut at 80 characters) reaches the status line so a blank page says why; never an address, a header or page content."
     },
     {
       "value": "Landroid/webkit/WebResourceRequest;",
