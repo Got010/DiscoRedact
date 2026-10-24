@@ -740,10 +740,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setOldestFirst(on: Boolean) = graph.settings.update { it.copy(oldestFirst = on) }
 
     /** What [StartRules] needs, read off the main thread. The header set is only tested for presence, never kept. */
-    private class StartFacts(val openRunId: Long?, val startedAt: Long?, val options: RunOptionsEntity?, val hasHeaders: Boolean)
+    private class StartFacts(
+        val openRunId: Long?,
+        val startedAt: Long?,
+        val options: RunOptionsEntity?,
+        val hasHeaders: Boolean,
+        /** The app-wide edge-block hold (EdgeHold), from a run's or a fetch's halt. */
+        val edgeHoldUntil: Long?,
+    )
 
     private suspend fun startFacts(runId: Long) = withContext(Dispatchers.IO) {
-        StartFacts(repo.openRunId(), repo.runSnapshot(runId)?.startedAt, repo.runOptions(runId), graph.credentials.load() != null)
+        StartFacts(repo.openRunId(), repo.runSnapshot(runId)?.startedAt, repo.runOptions(runId), graph.credentials.load() != null, repo.edgeHoldUntil())
     }
 
     private fun refusalText(r: StartDecision.Refuse): String = when (r.reason) {
@@ -756,8 +763,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         StartRefusal.FETCH_ACTIVE -> "A fetch from Discord is active. Pause or stop it (Fetch screen) before a run starts. Nothing was started."
     }
 
-    /** Whether the fetch worker is enqueued or running: no run starts beside it (CLAUDE.md rule 3). */
-    private fun fetchActive(): Boolean = fetchWork.value != RunScheduler.WorkState.NONE
+    /**
+     * Whether the fetch worker is enqueued or running: no run starts beside it (CLAUDE.md rule 3). Asked of WorkManager
+     * now, not read from [fetchWork], whose first value at app start is NONE until WorkManager answers.
+     */
+    private suspend fun fetchActive(): Boolean = fetchScheduler.observeActive().first() != RunScheduler.WorkState.NONE
+
+    /** Whether the run worker is enqueued or running, asked of WorkManager now (as [fetchActive]). */
+    private suspend fun runWorkerActive(): Boolean = scheduler.observeActive().first() != RunScheduler.WorkState.NONE
 
     /** Hands a run that has options to the worker with them. Nothing starts once a wipe has begun. */
     private fun continueRun(runId: Long, options: RunOptionsEntity?) {
@@ -783,7 +796,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val f = startFacts(runId)
                 // Once a run has options, its stored mode counts; the toggle only decides for a run with none yet.
                 val dryRun = f.options?.dryRun ?: s.dryRun
-                when (val d = StartRules.decide(runId, f.openRunId, f.startedAt, dryRun, f.hasHeaders, f.options?.resumeNotBefore, System.currentTimeMillis(), fetchActive())) {
+                when (val d = StartRules.decide(runId, f.openRunId, f.startedAt, dryRun, f.hasHeaders, f.options?.resumeNotBefore, System.currentTimeMillis(), fetchActive(), f.edgeHoldUntil)) {
                     is StartDecision.Refuse -> { runNotice = refusalText(d) }
                     StartDecision.Resume -> continueRun(runId, f.options)
                     StartDecision.Start -> {
@@ -814,7 +827,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     runNotice = "This run was never started; start it from its frozen screen."
                     return@launch
                 }
-                when (val d = StartRules.decide(runId, f.openRunId, f.startedAt, options.dryRun, f.hasHeaders, options.resumeNotBefore, System.currentTimeMillis(), fetchActive())) {
+                when (val d = StartRules.decide(runId, f.openRunId, f.startedAt, options.dryRun, f.hasHeaders, options.resumeNotBefore, System.currentTimeMillis(), fetchActive(), f.edgeHoldUntil)) {
                     is StartDecision.Refuse -> { runNotice = refusalText(d) }
                     StartDecision.Resume, StartDecision.Start -> continueRun(runId, options)
                 }
@@ -854,6 +867,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val hold = options.resumeNotBefore
                 if (hold != null && hold > System.currentTimeMillis()) return@withContext null
                 if (!options.dryRun && graph.credentials.load() == null) return@withContext null
+                // The app-wide edge hold (a fetch's halt included) keeps a real run waiting too.
+                val edge = repo.edgeHoldUntil()
+                if (!options.dryRun && edge != null && edge > System.currentTimeMillis()) return@withContext null
                 id to options.dryRun
             }
             if (resume == null) {
@@ -884,11 +900,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** What StartRules.decideFetch needs, read off the main thread. The header set is only tested for presence. */
     private suspend fun fetchDecision(): FetchDecision {
-        val hasHeaders = withContext(Dispatchers.IO) { graph.credentials.load() != null }
-        val snap = fetchView.value?.snapshot
+        val (hasHeaders, edgeHold) = withContext(Dispatchers.IO) { (graph.credentials.load() != null) to repo.edgeHoldUntil() }
+        val snap = graph.fetchState.snapshot()
         val open = snap != null && snap.endedAt == null
         return StartRules.decideFetch(
-            wiping, workState.value != RunScheduler.WorkState.NONE, hasHeaders, open, snap?.resumeNotBefore, System.currentTimeMillis(),
+            wiping, runWorkerActive(), hasHeaders, open, snap?.resumeNotBefore, System.currentTimeMillis(), edgeHold,
         )
     }
 
@@ -965,7 +981,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val hold = snap.resumeNotBefore
         if (hold != null && hold > System.currentTimeMillis()) return
         if (withContext(Dispatchers.IO) { graph.credentials.load() } == null) return
-        if (wiping || workState.value != RunScheduler.WorkState.NONE) return
+        val edge = withContext(Dispatchers.IO) { repo.edgeHoldUntil() }
+        if (edge != null && edge > System.currentTimeMillis()) return
+        if (wiping || runWorkerActive()) return
         fetchScheduler.start()
     }
 

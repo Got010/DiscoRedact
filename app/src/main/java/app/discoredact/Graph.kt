@@ -55,7 +55,7 @@ class Graph private constructor(private val context: Context) {
     val runStore: RunStore
         get() = synchronized(this) {
             repository
-            RoomRunStore(db!!)
+            RoomRunStore(db!!, fetchState)
         }
 
     /** The one network client of the app (M2). Built on first use; a dry run never touches it. */

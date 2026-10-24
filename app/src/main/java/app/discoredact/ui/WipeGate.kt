@@ -59,6 +59,7 @@ object WipeGate {
             fetchRunning -> " Pause or Stop the fetch on the Fetch screen first."
             else -> ""
         }
-        return "$subject $verb running; Purge and Wipe wait until it ends.$tail"
+        val pronoun = if (parts.size == 1) "it ends" else "they end"
+        return "$subject $verb running; Purge and Wipe wait until $pronoun.$tail"
     }
 }

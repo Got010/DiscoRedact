@@ -9,6 +9,7 @@ import app.discoredact.core.importer.ImportedMessage
 import app.discoredact.core.importer.PackageImporter
 import app.discoredact.core.importer.ZipSource
 import app.discoredact.core.executor.Executor
+import app.discoredact.core.executor.EdgeHold
 import app.discoredact.core.model.ChannelState
 import app.discoredact.core.model.DmMode
 import app.discoredact.core.model.MessageStatus
@@ -266,6 +267,9 @@ class Repository(private val db: AppDatabase, private val clock: () -> Long = Sy
     // ---- Fetch from Discord (0.3.0) -----------------------------------------------------------------------------
 
     fun observeFetchCounts() = db.fetches().observeCounts()
+
+    /** When the app-wide edge-block hold ends (EdgeHold), from the newest edge halt of a run or a fetch; null if none. */
+    fun edgeHoldUntil(): Long? = EdgeHold.until(runs.lastEdgeHaltAt())
     fun observeFetchEvents(limit: Int) = db.fetches().observeEvents(limit)
 
     /** A new fetch starts with no progress rows; the rows it found before stay (they are the account's own). */

@@ -55,10 +55,13 @@ or a group DM it left is not listed, although its messages still exist; the data
 The package is optional, not replaced.
 
 The reads are paced and halted exactly as the deletes: the preset's delay and jitter, the pause between DMs, Discord's
-rate-limit headers, quiet hours, the daily cap (a fetch counts the day's reads and deletes together), the tripwire at
+rate-limit headers, quiet hours, the daily cap, the tripwire at
 five invalid responses in ten minutes, and the halts on 401, a captcha, an edge block or an unknown error. Each DM's
-progress (the oldest id read, done or not) is written per page before the next request, so a kill or reboot resumes
-with no page read twice. A fetch is not a run: it deletes nothing and leaves the Dry run setting as it is. A fetch needs
+progress (the oldest id read, done or not) is written per page before the next request, so after a kill or reboot at
+most the page in flight is read again (its rows are already there; nothing is doubled). A read's 403 or 404 marks that
+DM inaccessible or gone, as a delete's does, which keeps it out of later runs; a later fetch that reads it opens it
+again. An edge block (a non-API answer) holds runs and fetches alike for an hour, whichever met it; Stop and a new
+fetch do not lift it. The daily cap counts the day's reads and deletes together, for runs and fetches alike. A fetch is not a run: it deletes nothing and leaves the Dry run setting as it is. A fetch needs
 stored credentials and does not start beside an active run (nor a run beside an active fetch). About one request per
 100 messages (everyone's) per DM, plus one per DM, plus two; at the Slower preset 1,000 reads take about 75 minutes.
 

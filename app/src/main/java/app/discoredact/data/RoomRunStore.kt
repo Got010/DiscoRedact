@@ -10,7 +10,7 @@ import app.discoredact.core.model.MessageStatus
 import app.discoredact.core.selection.GuardRow
 
 /** The executor's store on Room. Every method runs one short write, committed before it returns. */
-class RoomRunStore(private val db: AppDatabase) : RunStore {
+class RoomRunStore(private val db: AppDatabase, private val fetchState: FetchStateStore) : RunStore {
     private val runs = db.runs()
     private var eventsSinceTrim = 0
 
@@ -48,11 +48,14 @@ class RoomRunStore(private val db: AppDatabase) : RunStore {
         )
         if (++eventsSinceTrim >= TRIM_EVERY) {
             eventsSinceTrim = 0
-            runs.trimEvents(KEEP_EVENTS)
+            runs.trimRunEvents(KEEP_EVENTS)
         }
     }
 
     override fun deletedSince(sinceMs: Long): Int = runs.deletedSince(sinceMs)
+
+    /** The Fetch import's reads of the day: the daily cap counts them with the deletes (B34 API history, section 4). */
+    override fun readsOn(dayStartMs: Long): Int = fetchState.readsOn(dayStartMs)
 
     override fun invalidResponseTimesSince(sinceMs: Long): List<Long> = runs.invalidResponseTimesSince(sinceMs)
 

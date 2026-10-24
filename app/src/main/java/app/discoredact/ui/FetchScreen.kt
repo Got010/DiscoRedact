@@ -112,7 +112,9 @@ fun FetchNoticeScreen(vm: AppViewModel) {
                     "rate-limit headers followed, quiet hours ${formatMinute(config.quietHours.startMinute)}-${formatMinute(config.quietHours.endMinute)}, " +
                     "and the daily cap of ${config.dailyCap} requests (reads and deletes of the day together). Five invalid " +
                     "responses in ten minutes halt it, as do a rejected token, a captcha, an edge block or an unknown error. " +
-                    "Pause and Stop wait for the request in flight; a kill or reboot resumes with no page read twice.",
+                    "Pause and Stop wait for the request in flight; after a kill or reboot at most the page in flight is read again. " +
+                    "A read's 403 or 404 marks that DM inaccessible or gone, as a delete's does, which keeps it out of runs; a " +
+                    "later fetch that reads it opens it again. An edge block holds runs and fetches alike for an hour; Stop does not lift it.",
                 style = MaterialTheme.typography.bodySmall,
             )
             Text(
@@ -146,7 +148,7 @@ fun FetchNoticeScreen(vm: AppViewModel) {
 fun FetchScreen(vm: AppViewModel) {
     val view by vm.fetchView.collectAsState()
     val counts by vm.fetchCounts.collectAsState()
-    val events by vm.fetchEvents.collectAsState()
+    val allEvents by vm.fetchEvents.collectAsState()
     val work by vm.fetchWork.collectAsState()
     Scaffold(topBar = { TopAppBar(title = { Text("Fetch from Discord") }, navigationIcon = { BackButton(vm) }) }) { pad ->
         Column(
@@ -160,6 +162,8 @@ fun FetchScreen(vm: AppViewModel) {
                 return@Column
             }
             val s = v.snapshot
+            // This fetch's rows only: the log's rows with no run hold every earlier fetch too.
+            val events = allEvents.filter { it.ts >= v.createdAt }
             val now = System.currentTimeMillis()
             val running = work == RunScheduler.WorkState.RUNNING
             val scheduled = work == RunScheduler.WorkState.SCHEDULED

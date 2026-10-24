@@ -74,11 +74,11 @@ class WipeGateTest {
     @Test
     fun severalWritersAreListed() {
         assertEquals(
-            "An import and run #3 are running; Purge and Wipe wait until it ends. Pause or Stop the run on the Run screen first.",
+            "An import and run #3 are running; Purge and Wipe wait until they end. Pause or Stop the run on the Run screen first.",
             WipeGate.busyNotice(true, false, false, true, 3),
         )
         assertEquals(
-            "An import, a filter and a freeze are running; Purge and Wipe wait until it ends.",
+            "An import, a filter and a freeze are running; Purge and Wipe wait until they end.",
             WipeGate.busyNotice(true, true, true, false, null),
         )
     }
@@ -90,7 +90,7 @@ class WipeGateTest {
             WipeGate.busyNotice(false, false, false, false, null, fetchRunning = true),
         )
         assertEquals(
-            "Run #3 and a fetch are running; Purge and Wipe wait until it ends. Pause or Stop the run and the fetch first.",
+            "Run #3 and a fetch are running; Purge and Wipe wait until they end. Pause or Stop the run and the fetch first.",
             WipeGate.busyNotice(false, false, false, true, 3, fetchRunning = true),
         )
     }

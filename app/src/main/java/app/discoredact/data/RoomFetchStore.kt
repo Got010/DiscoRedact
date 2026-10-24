@@ -96,6 +96,8 @@ class RoomFetchStore(private val db: AppDatabase, private val state: FetchStateS
         )
     }
 
+    override fun channelReadable(channelId: Long, now: Long) = fetches.reopen(channelId)
+
     override fun event(event: FetchEventRecord) {
         runs.insertEvent(
             EventEntity(
@@ -105,7 +107,7 @@ class RoomFetchStore(private val db: AppDatabase, private val state: FetchStateS
         )
         if (++eventsSinceTrim >= TRIM_EVERY) {
             eventsSinceTrim = 0
-            runs.trimEvents(RoomRunStore.KEEP_EVENTS)
+            runs.trimFetchEvents(RoomRunStore.KEEP_EVENTS)
         }
     }
 

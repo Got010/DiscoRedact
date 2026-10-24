@@ -256,9 +256,25 @@ interface RunDao {
     @Insert
     fun insertEvent(event: EventEntity): Long
 
-    /** The rolling log keeps the newest [keep] rows. */
-    @Query("DELETE FROM events WHERE event_id NOT IN (SELECT event_id FROM events ORDER BY event_id DESC LIMIT :keep)")
-    fun trimEvents(keep: Int)
+    /**
+     * The rolling log keeps the newest [keep] rows of runs and, separately, the newest [keep] rows of fetches (no run),
+     * so a long fetch never evicts the events a run's report reads.
+     */
+    @Query(
+        "DELETE FROM events WHERE run_id IS NOT NULL AND event_id NOT IN " +
+            "(SELECT event_id FROM events WHERE run_id IS NOT NULL ORDER BY event_id DESC LIMIT :keep)",
+    )
+    fun trimRunEvents(keep: Int)
+
+    @Query(
+        "DELETE FROM events WHERE run_id IS NULL AND event_id NOT IN " +
+            "(SELECT event_id FROM events WHERE run_id IS NULL ORDER BY event_id DESC LIMIT :keep)",
+    )
+    fun trimFetchEvents(keep: Int)
+
+    /** The newest edge-block halt of a run or a fetch (EdgeHold): the app-wide hold ends an hour after it. */
+    @Query("SELECT MAX(ts) FROM events WHERE action_taken = 'HALT edge' OR action_taken LIKE 'HALT edge %'")
+    fun lastEdgeHaltAt(): Long?
 
     @Query("SELECT COUNT(*) FROM delete_log WHERE deleted_at >= :sinceMs")
     fun deletedSince(sinceMs: Long): Int
@@ -379,6 +395,10 @@ interface FetchDao {
 
     @Query("UPDATE fetch_progress SET done = 1, updated_at = :now WHERE channel_id = :channelId")
     fun markDone(channelId: Long, now: Long)
+
+    /** A page of the DM was read: a 403 or 404 that closed it no longer holds (FetchStore.channelReadable). */
+    @Query("UPDATE channels SET state = 'PENDING', last_error = NULL WHERE channel_id = :channelId AND state IN ('INACCESSIBLE', 'GONE')")
+    fun reopen(channelId: Long)
 
     /** A new fetch starts with no progress: every listed DM is read again from its newest page. */
     @Query("DELETE FROM fetch_progress")
