@@ -84,6 +84,7 @@ class ExecutorTest {
                 if (request.messageId == 101L) store.messages[102]!!.keep = true // the user stars 102 while 101 is in flight
                 return Responses.ok
             }
+            override fun get(request: GetRequest, headers: HeaderSet): ApiResponse = throw AssertionError("a run never reads")
         }
         run(executor(t = t))
         assertEquals(listOf(101L, 103L, 201L, 202L), transport.requests.map { it.messageId })
@@ -295,6 +296,7 @@ class ExecutorTest {
         store.messages[202]!!.status = MessageStatus.DELETED
         val e = executor(t = object : Transport {
             override fun send(request: DeleteRequest, headers: HeaderSet): ApiResponse = throw AssertionError("a dry run must not send")
+            override fun get(request: GetRequest, headers: HeaderSet): ApiResponse = throw AssertionError("a run never reads")
         }, cs = EmptyCredentialStore)
         assertEquals(SessionEnd.Done, run(e, dry = true))
         // Kept and non-pending messages never reach the guard (the candidate query excludes them); the report derives
@@ -413,6 +415,7 @@ class ExecutorTest {
                 Thread.sleep(30)
                 return transport.send(request, headers)
             }
+            override fun get(request: GetRequest, headers: HeaderSet): ApiResponse = throw AssertionError("a run never reads")
         }
         val a = Executor(store, slow, creds, config.copy(baseDelayMs = 0, jitterMaxMs = 0, channelSwitchMinMs = 0, channelSwitchMaxMs = 0), clock, Sleeper {}, Random(1), sendMutex = lock)
         val b = Executor(store, slow, creds, config.copy(baseDelayMs = 0, jitterMaxMs = 0, channelSwitchMinMs = 0, channelSwitchMaxMs = 0), clock, Sleeper {}, Random(2), sendMutex = lock)

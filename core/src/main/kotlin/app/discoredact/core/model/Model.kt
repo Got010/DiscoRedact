@@ -19,6 +19,17 @@ enum class DmMode {
 /** `channels.state` (spec section 5). */
 enum class ChannelState { PENDING, ACTIVE, DONE, INACCESSIBLE, GONE }
 
+/**
+ * `messages.source` and `channels.source` (schema 3): which import found the row. A row found by both is one row,
+ * [BOTH]; neither import ever removes a row or touches its selection, keep or status (B34 API history, section 5).
+ */
+enum class RowSource {
+    PACKAGE, API, BOTH;
+
+    /** What a row already marked [this] becomes when [found] finds it again. */
+    fun seenBy(found: RowSource): RowSource = if (this == found) this else BOTH
+}
+
 /** `messages.status` (spec section 5). */
 enum class MessageStatus { PENDING, DELETED, ALREADY_GONE, SKIPPED_SYSTEM, INACCESSIBLE, FAILED }
 

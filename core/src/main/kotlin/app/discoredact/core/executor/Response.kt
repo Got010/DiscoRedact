@@ -46,7 +46,10 @@ enum class HaltReason(val key: String) {
     TRIPWIRE("tripwire"),
 
     /** A 4xx the table does not name: surfaced with its status and code. */
-    UNKNOWN_4XX("unknown_4xx");
+    UNKNOWN_4XX("unknown_4xx"),
+
+    /** A read (the Fetch import) answered 2xx with JSON of a shape the app does not expect. Nothing of it is written. */
+    UNEXPECTED_BODY("unexpected_body");
 
     val stopReason: String get() = "halted:$key"
 }

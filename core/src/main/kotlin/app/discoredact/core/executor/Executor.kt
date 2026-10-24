@@ -59,6 +59,12 @@ sealed interface SessionEnd {
 
     /** A real run with no complete header set stored. Nothing was sent. */
     data object NoCredentials : SessionEnd
+
+    /** A fetch only: `GET /users/@me` answered without the account's id, so nothing can be filtered; nothing is read. */
+    data object NoAccountId : SessionEnd
+
+    /** A fetch only: the stored headers now belong to another account than the one this fetch began with. */
+    data object AccountChanged : SessionEnd
 }
 
 /**
@@ -373,6 +379,7 @@ class Executor(
             stopReason == HaltReason.EDGE_BLOCK.stopReason -> "Halted: an edge block (a non-API response). Resume by hand, not before an hour"
             stopReason == HaltReason.TRIPWIRE.stopReason -> "Halted: five invalid responses in ten minutes. Something is wrong; check before Resume"
             stopReason == HaltReason.UNKNOWN_4XX.stopReason -> "Halted: an unexpected 4xx response (see the last response)"
+            stopReason == HaltReason.UNEXPECTED_BODY.stopReason -> "Halted: Discord answered with a body of a shape the app does not know; nothing of it was kept"
             else -> stopReason
         }
     }
