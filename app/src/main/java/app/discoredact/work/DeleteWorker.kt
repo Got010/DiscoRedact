@@ -108,6 +108,8 @@ class DeleteWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                     return Result.success()
                 }
                 SessionEnd.Stopped -> return Result.success()
+                // A fetch's ends only (FetchSession); a run's executor never returns them.
+                SessionEnd.NoAccountId, SessionEnd.AccountChanged -> return Result.success()
             }
         }
     }

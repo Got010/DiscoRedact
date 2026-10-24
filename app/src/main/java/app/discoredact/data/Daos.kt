@@ -8,6 +8,7 @@ import androidx.room.Transaction
 import app.discoredact.core.model.ChannelState
 import app.discoredact.core.model.DmMode
 import app.discoredact.core.model.MessageStatus
+import app.discoredact.core.model.RowSource
 import kotlinx.coroutines.flow.Flow
 
 private const val SUMMARY_SELECT = """
@@ -66,6 +67,10 @@ interface ChannelDao {
     @Query("UPDATE channels SET message_count = (SELECT COUNT(*) FROM messages m WHERE m.channel_id = channels.channel_id)")
     fun recountMessages()
 
+    /** A row found again by the other import becomes BOTH; nothing else of it changes (schema 3). */
+    @Query("UPDATE channels SET source = 'BOTH' WHERE channel_id IN (:ids) AND source = :other")
+    fun markBoth(ids: List<Long>, other: RowSource)
+
     @Query("$SUMMARY_SELECT ORDER BY last_timestamp IS NULL, last_timestamp DESC, c.channel_id")
     fun observeSummaries(): Flow<List<ChannelSummary>>
 
@@ -92,6 +97,13 @@ interface ChannelDao {
 interface MessageDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     fun insertIgnore(messages: List<MessageEntity>): List<Long>
+
+    /** A message found again by the other import becomes BOTH; selection, keep, status and attempts stay (schema 3). */
+    @Query("UPDATE messages SET source = 'BOTH' WHERE message_id IN (:ids) AND source = :other")
+    fun markBoth(ids: List<Long>, other: RowSource)
+
+    @Query("SELECT source, COUNT(*) AS n FROM messages GROUP BY source")
+    fun observeSourceCounts(): Flow<List<SourceCount>>
 
     @Query(
         "$ROW_SELECT WHERE m.channel_id = :channelId AND (:query IS NULL OR m.content LIKE '%' || :query || '%' ESCAPE '\\') " +
@@ -347,4 +359,42 @@ interface RunDao {
             "(SELECT MAX(event_id) FROM events WHERE run_id IS NOT NULL AND action_taken LIKE 'HALT %' GROUP BY run_id)",
     )
     fun observeLastHalts(): Flow<List<RunLastHalt>>
+}
+
+/** The Fetch import's progress and writes (schema 3). Blocking: the fetch worker calls them off the main thread. */
+@Dao
+interface FetchDao {
+    @Query("SELECT channel_id, oldest_fetched_id, done FROM fetch_progress WHERE channel_id = :channelId")
+    fun progress(channelId: Long): FetchProgressRow?
+
+    /** The first listed DM that is not done, in channel-id order. */
+    @Query("SELECT channel_id, oldest_fetched_id, done FROM fetch_progress WHERE done = 0 ORDER BY channel_id LIMIT 1")
+    fun nextChannel(): FetchProgressRow?
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    fun insertProgress(rows: List<FetchProgressEntity>)
+
+    @Query("UPDATE fetch_progress SET oldest_fetched_id = :oldestId, done = :done, updated_at = :now WHERE channel_id = :channelId")
+    fun pageDone(channelId: Long, oldestId: Long?, done: Boolean, now: Long)
+
+    @Query("UPDATE fetch_progress SET done = 1, updated_at = :now WHERE channel_id = :channelId")
+    fun markDone(channelId: Long, now: Long)
+
+    /** A new fetch starts with no progress: every listed DM is read again from its newest page. */
+    @Query("DELETE FROM fetch_progress")
+    fun clearProgress()
+
+    /** A DM listed again by a later fetch takes the list's names only while no package import has named it. */
+    @Query("UPDATE channels SET display_name = :name, recipient_ids = :recipients WHERE channel_id = :channelId AND source = 'API'")
+    fun refreshFetchedNames(channelId: Long, name: String, recipients: String)
+
+    @Query("UPDATE channels SET message_count = (SELECT COUNT(*) FROM messages m WHERE m.channel_id = :channelId) WHERE channel_id = :channelId")
+    fun recount(channelId: Long)
+
+    @Query("SELECT COUNT(*) AS total, COALESCE(SUM(done), 0) AS done FROM fetch_progress")
+    fun observeCounts(): Flow<FetchCounts>
+
+    /** The fetch's events: the event log's rows with no run. No header, no body text, no account id. */
+    @Query("SELECT * FROM events WHERE run_id IS NULL ORDER BY event_id DESC LIMIT :limit")
+    fun observeEvents(limit: Int): Flow<List<EventEntity>>
 }

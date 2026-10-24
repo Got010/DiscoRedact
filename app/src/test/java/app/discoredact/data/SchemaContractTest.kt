@@ -31,13 +31,14 @@ class SchemaContractTest {
     fun section5TablesHaveExactlyTheSpecColumns() {
         val db = schema(AppDatabase.VERSION)
         assertEquals(
-            listOf("channel_id", "type", "display_name", "recipient_ids", "message_count", "mode", "state", "last_error"),
+            // Schema 3 adds `source` (which import found the row) after the spec's columns.
+            listOf("channel_id", "type", "display_name", "recipient_ids", "message_count", "mode", "state", "last_error", "source"),
             columns(table(db, "channels")),
         )
         assertEquals(
             listOf(
                 "message_id", "channel_id", "timestamp", "content", "has_attachments", "selected", "keep", "status",
-                "attempts", "last_http_status", "last_discord_code", "updated_at",
+                "attempts", "last_http_status", "last_discord_code", "updated_at", "source",
             ),
             columns(table(db, "messages")),
         )
@@ -73,5 +74,24 @@ class SchemaContractTest {
     @Test
     fun schemaFileVersionMatchesTheDatabase() {
         assertEquals(AppDatabase.VERSION, schema(AppDatabase.VERSION)["version"]!!.jsonPrimitive.int)
+    }
+
+    @Test
+    fun theSourceColumnsAndTheFetchProgressTable() {
+        val db = schema(AppDatabase.VERSION)
+        for (t in listOf("channels", "messages")) {
+            val source = table(db, t)["fields"]!!.jsonArray.map { it.jsonObject }.single { it["columnName"]!!.jsonPrimitive.content == "source" }
+            assertEquals("TEXT", source["affinity"]!!.jsonPrimitive.content)
+            assertTrue(source["notNull"]!!.jsonPrimitive.boolean)
+            assertEquals("'PACKAGE'", source["defaultValue"]!!.jsonPrimitive.content)
+        }
+        val progress = table(db, "fetch_progress")
+        assertEquals(listOf("channel_id", "oldest_fetched_id", "done", "updated_at"), columns(progress))
+        assertEquals(listOf("channel_id"), progress["primaryKey"]!!.jsonObject["columnNames"]!!.jsonArray.map { it.jsonPrimitive.content })
+        val nullable = progress["fields"]!!.jsonArray.map { it.jsonObject }.filter { it["notNull"]?.jsonPrimitive?.boolean != true }
+            .map { it["columnName"]!!.jsonPrimitive.content }
+        assertEquals(listOf("oldest_fetched_id"), nullable)
+        // The values the source column holds are the enum's names, as Room stores enums.
+        assertEquals(listOf("PACKAGE", "API", "BOTH"), app.discoredact.core.model.RowSource.entries.map { it.name })
     }
 }

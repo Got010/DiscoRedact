@@ -19,6 +19,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         RunOptionsEntity::class,
         RunResultEntity::class,
         DeleteLogEntity::class,
+        FetchProgressEntity::class,
     ],
     version = AppDatabase.VERSION,
     exportSchema = true,
@@ -27,10 +28,11 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun channels(): ChannelDao
     abstract fun messages(): MessageDao
     abstract fun runs(): RunDao
+    abstract fun fetches(): FetchDao
 
     companion object {
         const val NAME = "discoredact.db"
-        const val VERSION = 2
+        const val VERSION = 3
 
         /** Schema 2 (M2): the executor's side tables. Nothing in the section-5 tables changes. */
         val MIGRATION_1_2_SQL: List<String> = listOf(
@@ -55,10 +57,27 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * Schema 3 (0.3.0, the Fetch import): `source` on `channels` and `messages`, every existing row PACKAGE through
+         * the column default, and the `fetch_progress` side table. Nothing else changes; no row is rewritten.
+         */
+        val MIGRATION_2_3_SQL: List<String> = listOf(
+            "ALTER TABLE `channels` ADD COLUMN `source` TEXT NOT NULL DEFAULT 'PACKAGE'",
+            "ALTER TABLE `messages` ADD COLUMN `source` TEXT NOT NULL DEFAULT 'PACKAGE'",
+            "CREATE TABLE IF NOT EXISTS `fetch_progress` (`channel_id` INTEGER NOT NULL, `oldest_fetched_id` INTEGER, " +
+                "`done` INTEGER NOT NULL, `updated_at` INTEGER NOT NULL, PRIMARY KEY(`channel_id`))",
+        )
+
+        val MIGRATION_2_3: Migration = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_2_3_SQL.forEach(db::execSQL)
+            }
+        }
+
+        /**
          * Every schema change adds a migration here and a test (CLAUDE.md rule 19). There is deliberately no
          * destructive fallback: an upgrade without a migration fails instead of wiping the user's selections.
          */
-        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2)
+        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
 
         fun open(context: Context): AppDatabase =
             Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, NAME)

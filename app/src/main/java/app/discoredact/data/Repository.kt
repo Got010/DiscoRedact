@@ -12,6 +12,7 @@ import app.discoredact.core.executor.Executor
 import app.discoredact.core.model.ChannelState
 import app.discoredact.core.model.DmMode
 import app.discoredact.core.model.MessageStatus
+import app.discoredact.core.model.RowSource
 import app.discoredact.core.selection.DeletePlan
 import app.discoredact.core.selection.DeletePlanBuilder
 import app.discoredact.core.selection.MessageFilter
@@ -68,6 +69,8 @@ class Repository(private val db: AppDatabase, private val clock: () -> Long = Sy
                         },
                     )
                     channels.forEach { this@Repository.channels.updateNames(it.channelId, it.displayName, it.recipientIds.joinToString(",")) }
+                    // A channel the Fetch import found first is now found by both (schema 3); nothing else changes.
+                    channels.map { it.channelId }.chunked(CHUNK).forEach { this@Repository.channels.markBoth(it, RowSource.API) }
                 })
             }
 
@@ -87,6 +90,9 @@ class Repository(private val db: AppDatabase, private val clock: () -> Long = Sy
                         },
                     )
                     inserted = ids.count { it != -1L }
+                    // A message the Fetch import found first is now found by both; selection, keep and status stay.
+                    batch.filterIndexed { i, _ -> ids[i] == -1L }.map { it.messageId }.chunked(CHUNK)
+                        .forEach { messages.markBoth(it, RowSource.API) }
                 })
                 return inserted
             }
@@ -257,7 +263,17 @@ class Repository(private val db: AppDatabase, private val clock: () -> Long = Sy
     fun observeChannelLines(runId: Long) = runs.observeChannelLines(runId)
     fun observeDeletedSince(sinceMs: Long) = runs.observeDeletedSince(sinceMs)
 
+    // ---- Fetch from Discord (0.3.0) -----------------------------------------------------------------------------
+
+    fun observeFetchCounts() = db.fetches().observeCounts()
+    fun observeFetchEvents(limit: Int) = db.fetches().observeEvents(limit)
+
+    /** A new fetch starts with no progress rows; the rows it found before stay (they are the account's own). */
+    fun clearFetchProgress() = db.fetches().clearProgress()
+
     // ---- Reports (M4). Read-only. -------------------------------------------------------------------------------
+
+    fun observeSourceCounts() = messages.observeSourceCounts()
 
     fun observeStatusCounts() = messages.observeStatusCounts()
     fun observeKeptCount() = messages.observeKeptCount()

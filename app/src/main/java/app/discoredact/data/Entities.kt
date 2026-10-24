@@ -9,6 +9,7 @@ import app.discoredact.core.model.ChannelState
 import app.discoredact.core.model.ChannelType
 import app.discoredact.core.model.DmMode
 import app.discoredact.core.model.MessageStatus
+import app.discoredact.core.model.RowSource
 
 /*
  * Tables `channels`, `messages`, `runs` and `events` are spec section 5, column for column (snake_case names as the
@@ -30,6 +31,8 @@ data class ChannelEntity(
     @ColumnInfo(name = "mode") val mode: DmMode,
     @ColumnInfo(name = "state") val state: ChannelState,
     @ColumnInfo(name = "last_error") val lastError: String?,
+    /** Schema 3: which import found the channel (PACKAGE, API or BOTH). */
+    @ColumnInfo(name = "source", defaultValue = "'PACKAGE'") val source: RowSource = RowSource.PACKAGE,
 )
 
 @Entity(
@@ -57,6 +60,8 @@ data class MessageEntity(
     @ColumnInfo(name = "last_http_status") val lastHttpStatus: Int?,
     @ColumnInfo(name = "last_discord_code") val lastDiscordCode: Int?,
     @ColumnInfo(name = "updated_at") val updatedAt: Long,
+    /** Schema 3: which import found the message (PACKAGE, API or BOTH). Neither import ever changes anything else of a row it finds again. */
+    @ColumnInfo(name = "source", defaultValue = "'PACKAGE'") val source: RowSource = RowSource.PACKAGE,
 )
 
 @Entity(tableName = "runs")
@@ -169,4 +174,18 @@ data class DeleteLogEntity(
     @PrimaryKey @ColumnInfo(name = "message_id") val messageId: Long,
     @ColumnInfo(name = "run_id") val runId: Long,
     @ColumnInfo(name = "deleted_at") val deletedAt: Long,
+)
+
+/*
+ * Schema 3 (0.3.0, the Fetch import) adds `source` to `channels` and `messages` (every existing row PACKAGE) and:
+ *   fetch_progress  each listed DM's read progress: the oldest message id read so far (the next page's `before`) and
+ *                   whether the DM is done, written per page before the next request (B34 API history, section 4)
+ */
+
+@Entity(tableName = "fetch_progress")
+data class FetchProgressEntity(
+    @PrimaryKey @ColumnInfo(name = "channel_id") val channelId: Long,
+    @ColumnInfo(name = "oldest_fetched_id") val oldestFetchedId: Long?,
+    @ColumnInfo(name = "done") val done: Boolean,
+    @ColumnInfo(name = "updated_at") val updatedAt: Long,
 )

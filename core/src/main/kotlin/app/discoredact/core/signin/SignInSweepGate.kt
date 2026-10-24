@@ -4,7 +4,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * Whether a sign-in page may load over the WebView's data directories (CLAUDE.md rules 9 and 19). A page loads only
+ * Whether a sign-in page may load over the sign-in page's data directories (CLAUDE.md rules 9 and 19). A page loads only
  * after a sweep (deleting what an earlier page left) has succeeded in this process. The sweep made at process start
  * counts once; a failed sweep is tried again on the next ask. [invalidate] (Wipe everything, which deletes the
  * directories while a page may have run earlier in the same process) makes the next page sweep again before it

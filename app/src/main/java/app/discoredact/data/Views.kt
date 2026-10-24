@@ -5,6 +5,8 @@ import app.discoredact.core.model.ChannelState
 import app.discoredact.core.model.ChannelType
 import app.discoredact.core.model.DmMode
 import app.discoredact.core.model.MessageStatus
+import app.discoredact.core.model.RowSource
+import app.discoredact.core.history.FetchProgress
 import app.discoredact.core.selection.ChannelSel
 import app.discoredact.core.selection.MessageSel
 
@@ -146,4 +148,25 @@ data class RunReport(
     val noResponse: Int,
     val transientCount: Int,
     val lastHalt: String?,
+)
+
+/** One line of the Reports source counts: how many messages each import found (schema 3). */
+data class SourceCount(
+    @ColumnInfo(name = "source") val source: RowSource,
+    @ColumnInfo(name = "n") val count: Int,
+)
+
+/** A DM's read progress as the fetch store reads it. */
+data class FetchProgressRow(
+    @ColumnInfo(name = "channel_id") val channelId: Long,
+    @ColumnInfo(name = "oldest_fetched_id") val oldestFetchedId: Long?,
+    @ColumnInfo(name = "done") val done: Boolean,
+) {
+    fun toCore() = FetchProgress(channelId, oldestFetchedId, done)
+}
+
+/** The Fetch screen's DM counts: listed, and done. */
+data class FetchCounts(
+    @ColumnInfo(name = "total") val total: Int,
+    @ColumnInfo(name = "done") val done: Int,
 )

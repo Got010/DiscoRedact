@@ -55,7 +55,8 @@ fun CredentialsScreen(vm: AppViewModel) {
     var confirmWipe by remember { mutableStateOf(false) }
     val status = vm.credentialState
     val work by vm.workState.collectAsState()
-    val signInBlocked = vm.signInBlockedReason(work)
+    val fetchWork by vm.fetchWork.collectAsState()
+    val signInBlocked = vm.signInBlockedReason(work, fetchWork)
     Scaffold(topBar = { TopAppBar(title = { Text("Credentials") }, navigationIcon = { BackButton(vm) }) }) { pad ->
         Column(
             Modifier.padding(pad).padding(16.dp).fillMaxSize().verticalScroll(rememberScrollState()),
@@ -64,6 +65,14 @@ fun CredentialsScreen(vm: AppViewModel) {
             Text("Status", style = MaterialTheme.typography.titleMedium)
             val warn = status is CredentialState.Unreadable || (status is CredentialState.Present && status.status.stale)
             Text(credentialSummary(status), color = if (warn) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+            if (status is CredentialState.Present && status.status.stale) {
+                Text(
+                    "Fetch from Discord is allowed with stale headers (reads change nothing on the account), but Discord is more " +
+                        "likely to refuse an old client build; capture again first if you can.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
             Text(
                 "Stored encrypted under a key in the phone's Keystore; never logged, never backed up, never shown here. " +
                     "A real run sends these five headers exactly as captured, nothing else.",
