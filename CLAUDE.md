@@ -1,7 +1,8 @@
 # DiscoRedact - rules for Claude sessions
 
 Private-use Android app (Kotlin, Compose, Room, OkHttp, WorkManager) that deletes the owner's own Discord DM and
-group-DM messages on an alternate account, using message IDs from the official data package only. The full spec
+group-DM messages on an alternate account, using message IDs from the official data package or from the account's
+own DM history read through the Fetch import (rules 1 and 4). The full spec
 (`DM Scrub - Claude Code Handoff Spec`) lives in the owner's program repo as `specs/B34-discoredact.md`; a session
 without that repo attached asks the owner for it before touching code. Rules 1-10 are the spec's hard scope and
 executor rules; 11-20 are the owner's program-wide rules. Changing any rule here is a gate change (rule 14).
