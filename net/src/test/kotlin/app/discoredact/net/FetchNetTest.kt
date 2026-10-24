@@ -200,8 +200,9 @@ class FetchNetTest {
         } catch (e: TransportException) {
             assertEquals("response too large", e.message)
         }
-        // The cap is 2 MiB, and Discord's largest page (100 messages of 4,000 three-byte characters) is under it.
-        assertEquals(2L * 1024 * 1024, DiscordTransport.MAX_READ_BODY_BYTES)
+        // The cap is 4 MiB: above the largest legitimate page (100 maximum-length replies with their referenced
+        // messages, about 2.5 MB), and a page of text alone (100 messages of 4,000 three-byte characters) is far under it.
+        assertEquals(4L * 1024 * 1024, DiscordTransport.MAX_READ_BODY_BYTES)
         val worst = Pages.page((0 until 100).map { Pages.msg(5_000L - it, ME, 10, content = "\u20ac".repeat(4_000)) }).body
         assertTrue(worst.toByteArray().size in 1_200_000 until DiscordTransport.MAX_READ_BODY_BYTES.toInt())
         server.enqueue(json(200, worst))
