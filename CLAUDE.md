@@ -8,9 +8,11 @@ executor rules; 11-20 are the owner's program-wide rules. Changing any rule here
 
 ## Hard rules (the app)
 
-1. **One endpoint.** The only network call the app may make is
-   `DELETE https://discord.com/api/v9/channels/{channel_id}/messages/{message_id}`. No search, no `GET .../messages`,
-   no history fetch, no gateway or websocket, no `POST /users/@me/channels`, no bulk delete, no edits, no guilds.
+1. **One delete endpoint, three read endpoints.** The only network calls the app may make are
+   `DELETE https://discord.com/api/v9/channels/{channel_id}/messages/{message_id}` and, from the Fetch import only,
+   `GET /users/@me`, `GET /users/@me/channels` and `GET /channels/{channel_id}/messages?limit=100[&before=…]`, all on
+   `https://discord.com/api/v9`, paced and halted as the deletes are. No search, no other history read, no gateway or
+   websocket, no `POST /users/@me/channels`, no bulk delete, no edits, no guilds.
 2. **One host.** An OkHttp interceptor rejects any host but `discord.com`, and a test proves it. No analytics, crash
    reporting or any SDK that phones home. The manifest declares no network permission beyond `INTERNET`. The sign-in
    screen's WebView has its own filter that admits only the hosts enumerated in `gate/baseline.json`, each with a note,
@@ -19,8 +21,10 @@ executor rules; 11-20 are the owner's program-wide rules. Changing any rule here
    the capture limits but does not prevent; it exists only to capture the five headers and is cleared after each
    capture.
 3. **One request in flight, always.** One worker, sequential, no parallelism, no "fast mode", no second account.
-4. **Message IDs come only from the data package.** The importer reads only ZIP entries under `messages/`
-   (case-insensitive) and never `account/`, `activity/`, `servers/`, `ads/` or support tickets. Guild channels are skipped.
+4. **Message IDs come only from the data package or from the account's own DM history** read through the three
+   endpoints of rule 1 and filtered to the account's own author id in `:core` (a test proves it). The importer reads
+   only ZIP entries under `messages/` (case-insensitive) and never `account/`, `activity/`, `servers/`, `ads/` or
+   support tickets. Guild channels are skipped; the fetch lists DMs and group DMs only.
 5. **Delete guard.** Immediately before each request the message row is re-read; the DELETE is sent only if the message
    is in the frozen run set, `status = PENDING` and `keep = false`. `keep` beats every filter, mode and mid-run change.
 6. **Status is written per message before moving on**, so a kill or reboot resumes with no re-delete and no skip.
