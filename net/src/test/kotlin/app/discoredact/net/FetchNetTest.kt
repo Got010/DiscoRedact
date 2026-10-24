@@ -200,6 +200,12 @@ class FetchNetTest {
         } catch (e: TransportException) {
             assertEquals("response too large", e.message)
         }
+        // The cap is 2 MiB, and Discord's largest page (100 messages of 4,000 three-byte characters) is under it.
+        assertEquals(2L * 1024 * 1024, DiscordTransport.MAX_READ_BODY_BYTES)
+        val worst = Pages.page((0 until 100).map { Pages.msg(5_000L - it, ME, 10, content = "\u20ac".repeat(4_000)) }).body
+        assertTrue(worst.toByteArray().size in 1_200_000 until DiscordTransport.MAX_READ_BODY_BYTES.toInt())
+        server.enqueue(json(200, worst))
+        assertEquals(worst, transport.get(GetRequest.Messages(10, null), TEST_HEADERS).body)
         // A page just under the cap is read whole.
         val rows = Pages.page(Pages.pageRows(10, 5_000, 100)).body
         server.enqueue(json(200, rows))
@@ -282,5 +288,18 @@ class FetchNetTest {
         }
         assertEquals(2, thrown.size)
         assertEquals(TEST_HEADERS.authorization, server.takeRequest().headers["Authorization"])
+    }
+
+    /** L-6: the transport's own refusal halts the session by name; the worker does not die, nothing reaches the server. */
+    @Test fun aRequestTheTransportRefusesHaltsTheFetchByName() {
+        listed(10)
+        val wrongBase = DiscordTransport.forTests(server.url("/api/v10").toString(), AllowMock(server.hostName))
+        val end = runBlocking { FetchSession(store, wrongBase, creds, config, clock, sleeper, Random(3)).runSession() } as SessionEnd.Halted
+        assertEquals(HaltReason.REFUSED_LOCALLY, end.reason)
+        assertEquals(0, server.requestCount)
+        val wrongHost = DiscordTransport.forTests("https://cdn.discordapp.com/api/v9", HostAllowlist())
+        store.fetch!!.stopReason = null
+        val end2 = runBlocking { FetchSession(store, wrongHost, creds, config, clock, sleeper, Random(3)).runSession() } as SessionEnd.Halted
+        assertEquals(HaltReason.REFUSED_LOCALLY, end2.reason)
     }
 }

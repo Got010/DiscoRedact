@@ -83,6 +83,8 @@ class FakeStore : RunStore {
     val events = ArrayList<EventRecord>()
     val deleteLog = ArrayList<Pair<Long, Long>>()
     val verdicts = LinkedHashMap<Long, DryVerdict>()
+    /** The Fetch import's reads per local day (the daily cap counts them with the deletes). */
+    val readsByDay = HashMap<Long, Int>()
 
     fun channel(id: Long, vararg messageIds: Long) {
         channelStates[id] = ChannelState.PENDING
@@ -130,6 +132,7 @@ class FakeStore : RunStore {
     override fun dryVerdict(runId: Long, messageId: Long, verdict: DryVerdict) { verdicts[messageId] = verdict }
     override fun event(event: EventRecord) { events.add(event) }
     override fun deletedSince(sinceMs: Long): Int = deleteLog.count { it.second >= sinceMs }
+    override fun readsOn(dayStartMs: Long): Int = readsByDay[dayStartMs] ?: 0
     override fun invalidResponseTimesSince(sinceMs: Long): List<Long> = events.filter {
         it.ts >= sinceMs && (it.httpStatus == 401 || it.httpStatus == 403 || (it.httpStatus == 429 && it.actionTaken != "RATE_LIMITED shared"))
     }.map { it.ts }

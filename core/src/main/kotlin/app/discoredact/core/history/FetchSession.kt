@@ -3,12 +3,14 @@ package app.discoredact.core.history
 import app.discoredact.core.executor.ApiResponse
 import app.discoredact.core.executor.Clock
 import app.discoredact.core.executor.CredentialStore
+import app.discoredact.core.executor.EdgeHold
 import app.discoredact.core.executor.Executor
 import app.discoredact.core.executor.GetRequest
 import app.discoredact.core.executor.HaltReason
 import app.discoredact.core.executor.HeaderSet
 import app.discoredact.core.executor.Outcome
 import app.discoredact.core.executor.RateLimitInfo
+import app.discoredact.core.executor.RefusedBeforeSending
 import app.discoredact.core.executor.ResponseClassifier
 import app.discoredact.core.executor.SessionEnd
 import app.discoredact.core.executor.Sleeper
@@ -50,7 +52,8 @@ class FetchSession(
     private val limits: ImportLimits = ImportLimits(),
 ) {
     val transientBackoffMs: LongArray = longArrayOf(30_000, 120_000, 600_000)
-    val edgeBlockHoldMs: Long = 60 * 60 * 1000L
+    /** The app-wide edge hold (EdgeHold): the fetch's own notBefore says the same as the shared event log. */
+    val edgeBlockHoldMs: Long = EdgeHold.HOLD_MS
 
     private sealed interface Res {
         /** The id, the list or a page was written. */
@@ -135,12 +138,22 @@ class FetchSession(
             val result: StepResult? = sendMutex.withLock {
                 withContext(NonCancellable) {
                     if (store.fetch()?.endedAt != null || nextStep(headers) != step) return@withContext null
+                    var refused = false
                     val response = try {
                         transport.get(step, headers)
                     } catch (_: TransportException) {
                         null
+                    } catch (e: Exception) {
+                        // The transport's own refusal (nothing was sent): a named halt, never an uncaught exception.
+                        if (e !is RefusedBeforeSending) throw e
+                        refused = true
+                        null
                     }
                     val at = clock.nowMs()
+                    if (refused) {
+                        store.event(FetchEventRecord(at, null, null, null, null, null, "HALT ${HaltReason.REFUSED_LOCALLY.key}"))
+                        return@withContext StepResult(Res.Failed(Outcome.Halt(HaltReason.REFUSED_LOCALLY, null, null)), 0L)
+                    }
                     store.readSent(at, dayStart())
                     if (response == null) {
                         store.event(FetchEventRecord(at, null, null, null, null, null, "NO_RESPONSE"))
@@ -281,6 +294,8 @@ class FetchSession(
                         FetchPlan.Advance.Stuck -> Res.BodyHalt(HaltReason.UNEXPECTED_BODY, response.status) to "HALT ${HaltReason.UNEXPECTED_BODY.key}"
                         is FetchPlan.Advance.Next -> {
                             store.pageWritten(step.channelId, page.own, next.progress.oldestFetchedId, next.progress.done, at)
+                            // A page read proves access again: a DM an earlier 403 or 404 marked is open to runs again.
+                            store.channelReadable(step.channelId, at)
                             Res.Progress to "FETCH_PAGE ${page.pageSize} own ${page.own.size}" + if (next.progress.done) " done" else ""
                         }
                     }

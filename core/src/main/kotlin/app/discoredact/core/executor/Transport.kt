@@ -57,6 +57,13 @@ data class ApiResponse(val status: Int, val headers: Map<String, String>, val bo
 class TransportException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 /**
+ * Marks the transport's own refusals: a request to another host (CLAUDE.md rule 2) or outside the four of rule 1,
+ * refused before any connection, so nothing was sent. The run and the fetch halt on one with
+ * [HaltReason.REFUSED_LOCALLY] instead of letting the worker die on an uncaught exception.
+ */
+interface RefusedBeforeSending
+
+/**
  * Sends one delete or one read. The real one (`:net`) uses OkHttp, one request in flight across both; the dry run uses
  * [DryRunTransport] and never opens a socket.
  */

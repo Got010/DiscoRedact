@@ -16,23 +16,41 @@ class SignInSweepGate(
     /** A fresh sweep, run now. */
     private val sweep: suspend () -> Boolean,
 ) {
+    /** One ask at a time. */
     private val lock = Mutex()
-    @Volatile private var clean = false
-    @Volatile private var startCounts = true
+
+    /** Guards the three fields below; never held across a sweep, so [invalidate] needs no suspension. */
+    private val state = Any()
+    private var clean = false
+    private var startCounts = true
+
+    /** Bumped by [invalidate]: a sweep that began before a wipe never marks the directories clean after it. */
+    private var generation = 0
 
     /** True once a sweep has succeeded since process start or the last [invalidate]; false means the page must not load. */
     suspend fun clean(): Boolean = lock.withLock {
-        if (clean) return@withLock true
-        val fromStart = startCounts && runCatching { startSweep() }.getOrDefault(false)
-        startCounts = false
+        val (gen, useStart) = synchronized(state) {
+            if (clean) return@withLock true
+            val use = startCounts
+            startCounts = false
+            generation to use
+        }
+        val fromStart = useStart && runCatching { startSweep() }.getOrDefault(false)
         val ok = fromStart || runCatching { sweep() }.getOrDefault(false)
-        if (ok) clean = true
-        ok
+        synchronized(state) {
+            // A wipe that ran during the sweep may have left a provider-held directory behind it: not clean.
+            val stillValid = ok && generation == gen
+            if (stillValid) clean = true
+            stillValid
+        }
     }
 
     /** The directories were deleted under a page that may have run: the next page sweeps again first. */
     fun invalidate() {
-        startCounts = false
-        clean = false
+        synchronized(state) {
+            generation++
+            startCounts = false
+            clean = false
+        }
     }
 }

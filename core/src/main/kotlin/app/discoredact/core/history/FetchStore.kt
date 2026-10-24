@@ -35,7 +35,7 @@ data class FetchEventRecord(
 /**
  * Everything the fetch reads and writes (the read side's `RunStore`). The app implements it on Room and the settings
  * file; tests use an in-memory one. Every write is committed before the session moves on, so a kill or reboot resumes
- * from the rows: no page is read twice, none is skipped.
+ * from the rows: at most the page in flight is read again (its rows are already present then), none is skipped.
  */
 interface FetchStore {
     /** The current fetch, or null when none was ever started (or everything was wiped). */
@@ -81,8 +81,17 @@ interface FetchStore {
         return inserted
     }
 
-    /** A DM the history read found gone (404) or inaccessible (403): the channel's state, and its progress done. */
+    /**
+     * A DM the history read found gone (404) or inaccessible (403): the channel's state, and its progress done. Like a
+     * delete's 403 or 404, this takes the DM out of later runs until a read of it succeeds ([channelReadable]).
+     */
     fun channelOutcome(channelId: Long, state: ChannelState, error: String, now: Long)
+
+    /**
+     * A page of the DM was just read: if a 403 or 404 (a read's or a delete's) marked it INACCESSIBLE or GONE, it is
+     * PENDING again with no error, since the read proves access. Any other state is left alone.
+     */
+    fun channelReadable(channelId: Long, now: Long)
 
     fun event(event: FetchEventRecord)
 

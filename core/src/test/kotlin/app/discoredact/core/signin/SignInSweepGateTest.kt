@@ -60,4 +60,12 @@ class SignInSweepGateTest {
         val g = SignInSweepGate({ error("io") }, { error("io") })
         assertFalse(g.clean())
     }
+
+    @Test fun aWipeDuringASweepIsNotMarkedClean() = runBlocking {
+        lateinit var g: SignInSweepGate
+        var wipeDuringSweep = true
+        g = SignInSweepGate({ false }, { if (wipeDuringSweep) { wipeDuringSweep = false; g.invalidate() }; true })
+        assertFalse(g.clean()) // the sweep succeeded, but a wipe ran during it: the page must not load on it
+        assertTrue(g.clean()) // the next ask sweeps again
+    }
 }

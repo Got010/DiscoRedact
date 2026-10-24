@@ -96,8 +96,8 @@ class Executor(
     /** Backoff after consecutive transient failures; a further failure pauses the run. */
     val transientBackoffMs: LongArray = longArrayOf(30_000, 120_000, 600_000)
 
-    /** After an edge block the run may not be resumed for an hour (spec section 9). */
-    val edgeBlockHoldMs: Long = 60 * 60 * 1000L
+    /** After an edge block the run may not be resumed for an hour (spec section 9); the hold is app-wide (EdgeHold). */
+    val edgeBlockHoldMs: Long = EdgeHold.HOLD_MS
 
     suspend fun runSession(runId: Long, dryRun: Boolean, oldestFirst: Boolean): SessionEnd {
         val run = store.run(runId) ?: error("no run $runId")
@@ -125,7 +125,7 @@ class Executor(
                 log(runId, "QUIET_UNTIL $until")
                 return SessionEnd.QuietUntil(until)
             }
-            if (!dryRun && Pacing.dailyCapReached(config, deletedToday())) {
+            if (!dryRun && Pacing.dailyCapReached(config, requestsToday())) {
                 val until = clock.nextMidnightMs()
                 log(runId, "CAP_UNTIL $until")
                 return SessionEnd.CapUntil(until)
@@ -197,13 +197,22 @@ class Executor(
                 withContext(NonCancellable) {
                     val row = store.guardRow(candidate.messageId)
                     if (row == null || !deleteGuard(row, frozen)) return@withContext null
+                    var refused = false
                     val response = try {
                         transport.send(DeleteRequest(candidate.channelId, candidate.messageId), headers)
                     } catch (_: TransportException) {
                         null
+                    } catch (e: Exception) {
+                        // The transport's own refusal (nothing was sent): a named halt, never an uncaught exception.
+                        if (e !is RefusedBeforeSending) throw e
+                        refused = true
+                        null
                     }
                     val at = clock.nowMs()
-                    if (response == null) {
+                    if (refused) {
+                        store.event(EventRecord(at, runId, null, null, null, null, null, "HALT ${HaltReason.REFUSED_LOCALLY.key}"))
+                        StepResult(Outcome.Halt(HaltReason.REFUSED_LOCALLY, null, null), null, 0L)
+                    } else if (response == null) {
                         store.messageOutcome(candidate.messageId, MessageStatus.PENDING, null, null, at)
                         store.event(EventRecord(at, runId, null, null, null, null, null, "NO_RESPONSE"))
                         StepResult(Outcome.Transient(null), null, 0L)
@@ -331,9 +340,10 @@ class Executor(
     private fun log(runId: Long, action: String) =
         store.event(EventRecord(clock.nowMs(), runId, null, null, null, null, null, action))
 
-    private fun deletedToday(): Int {
+    /** The day's deletes and the Fetch import's reads together: one cap for the account (B34 API history, section 4). */
+    private fun requestsToday(): Int {
         val midnight = clock.localNow().toLocalDate().atStartOfDay(clock.zone).toInstant().toEpochMilli()
-        return store.deletedSince(midnight)
+        return store.deletedSince(midnight) + store.readsOn(midnight)
     }
 
     /** The frozen set as the store holds it. It never grows: `run_messages` is written once, at the freeze. */
@@ -380,6 +390,7 @@ class Executor(
             stopReason == HaltReason.TRIPWIRE.stopReason -> "Halted: five invalid responses in ten minutes. Something is wrong; check before Resume"
             stopReason == HaltReason.UNKNOWN_4XX.stopReason -> "Halted: an unexpected 4xx response (see the last response)"
             stopReason == HaltReason.UNEXPECTED_BODY.stopReason -> "Halted: Discord answered with a body of a shape the app does not know; nothing of it was kept"
+            stopReason == HaltReason.REFUSED_LOCALLY.stopReason -> "Halted: the app refused to send a request outside its rules; nothing was sent. Report this before Resume"
             else -> stopReason
         }
     }

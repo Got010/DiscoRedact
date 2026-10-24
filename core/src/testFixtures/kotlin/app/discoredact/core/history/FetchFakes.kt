@@ -70,6 +70,11 @@ class FakeFetchStore : FetchStore {
         writes.add("outcome $channelId")
     }
 
+    @Synchronized override fun channelReadable(channelId: Long, now: Long) {
+        val c = channels[channelId] ?: return
+        if (c.state == ChannelState.INACCESSIBLE || c.state == ChannelState.GONE) { c.state = ChannelState.PENDING; c.error = null }
+    }
+
     @Synchronized override fun event(event: FetchEventRecord) { events.add(event) }
     @Synchronized override fun readSent(now: Long, dayStartMs: Long) { readsByDay.merge(dayStartMs, 1, Int::plus) }
     @Synchronized override fun readsOn(dayStartMs: Long): Int = readsByDay[dayStartMs] ?: 0

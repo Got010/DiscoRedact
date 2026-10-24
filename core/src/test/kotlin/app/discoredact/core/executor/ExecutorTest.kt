@@ -460,4 +460,28 @@ class ExecutorTest {
         assertTrue("stopped early: ${store.verdicts.size}", store.verdicts.size < 50)
         assertNull(store.runs[1]!!.endedAt)
     }
+
+    @Test fun theFetchsReadsOfTheDayCountTowardTheRunsCap() {
+        twoChannels()
+        val midnight = LocalDateTime.of(2026, 10, 21, 0, 0).atZone(clock.zone).toInstant().toEpochMilli()
+        store.readsByDay[midnight] = config.dailyCap
+        val end = run()
+        assertTrue(end is SessionEnd.CapUntil)
+        assertTrue(transport.requests.isEmpty())
+        // With room for two, the run sends two and stops at the cap.
+        store.readsByDay[midnight] = config.dailyCap - 2
+        assertTrue(run() is SessionEnd.CapUntil)
+        assertEquals(2, transport.requests.size)
+    }
+
+    @Test fun aRequestTheTransportRefusesHaltsNamedAndLeavesTheMessagePending() {
+        twoChannels()
+        class Refused : java.io.IOException("refused"), RefusedBeforeSending
+        transport.enqueue(Refused())
+        val end = run() as SessionEnd.Halted
+        assertEquals(HaltReason.REFUSED_LOCALLY, end.reason)
+        assertEquals(MessageStatus.PENDING, store.messages[101]!!.status)
+        assertEquals("halted:refused_locally", store.runs[1]!!.stopReason)
+        assertTrue(store.deleteLog.isEmpty())
+    }
 }

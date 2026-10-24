@@ -24,6 +24,12 @@ class ChannelsParserTest {
             dm(11, 501L to "anna"),
             """{"id":"18","type":1,"recipients":[]}""",
             """{"id":"19","type":3,"name":"  ","recipients":[]}""",
+            // Types other than 1 and 3 with no guild_id: a guild text, voice, category, announcement or directory.
+            """{"id":"20","type":0,"recipients":[{"id":"5"}]}""",
+            """{"id":"21","type":2,"recipients":[]}""",
+            """{"id":"22","type":4}""",
+            """{"id":"23","type":5,"name":"news"}""",
+            """{"id":"24","type":13}""",
         ).joinToString(",") + "]"
         val list = ChannelsParser.dms(body)!!
         // A type sent as the text "1" reads as 1, as the package import reads it.
@@ -32,7 +38,7 @@ class ChannelsParserTest {
             listOf(ChannelType.DM, ChannelType.GROUP_DM, ChannelType.GROUP_DM, ChannelType.DM, ChannelType.DM, ChannelType.GROUP_DM),
             list.channels.map { it.type },
         )
-        assertEquals(3, list.skippedOther)
+        assertEquals(8, list.skippedOther)
         assertEquals(2, list.malformed)
         assertEquals("anna", list.channels[0].displayName)
         assertEquals(listOf("501"), list.channels[0].recipientIds)

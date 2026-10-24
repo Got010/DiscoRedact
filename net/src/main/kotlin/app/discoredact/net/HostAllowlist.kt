@@ -1,15 +1,18 @@
 package app.discoredact.net
 
+import app.discoredact.core.executor.RefusedBeforeSending
 import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.Response
 import java.io.IOException
 
 /** Thrown before any connection is made when a request names a host other than the allowed one (CLAUDE.md rule 2). */
-class HostNotAllowedException(host: String, scheme: String) : IOException("request refused: $scheme://$host is not the allowed host")
+class HostNotAllowedException(host: String, scheme: String) :
+    IOException("request refused: $scheme://$host is not the allowed host"), RefusedBeforeSending
 
 /** Thrown before any connection is made when a request is not one of the four the app may make (CLAUDE.md rule 1). */
-class RequestNotAllowedException(method: String) : IOException("request refused: $method is not one of the four allowed requests")
+class RequestNotAllowedException(method: String) :
+    IOException("request refused: $method is not one of the four allowed requests"), RefusedBeforeSending
 
 /**
  * The host allowlist: an application interceptor, installed first, so it runs before DNS, before any connection and

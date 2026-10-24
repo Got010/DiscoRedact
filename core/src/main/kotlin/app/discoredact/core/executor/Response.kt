@@ -49,7 +49,10 @@ enum class HaltReason(val key: String) {
     UNKNOWN_4XX("unknown_4xx"),
 
     /** A read (the Fetch import) answered 2xx with JSON of a shape the app does not expect. Nothing of it is written. */
-    UNEXPECTED_BODY("unexpected_body");
+    UNEXPECTED_BODY("unexpected_body"),
+
+    /** The transport refused the request itself (another host, or not one of the four): nothing was sent. */
+    REFUSED_LOCALLY("refused_locally");
 
     val stopReason: String get() = "halted:$key"
 }

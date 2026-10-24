@@ -15,7 +15,8 @@ class StartRulesTest {
         hasHeaders: Boolean = true,
         holdUntil: Long? = null,
         fetchActive: Boolean = false,
-    ) = StartRules.decide(runId, openRunId, startedAt, dryRun, hasHeaders, holdUntil, now, fetchActive)
+        edgeHoldUntil: Long? = null,
+    ) = StartRules.decide(runId, openRunId, startedAt, dryRun, hasHeaders, holdUntil, now, fetchActive, edgeHoldUntil)
 
     private fun fetch(
         wiping: Boolean = false,
@@ -23,7 +24,8 @@ class StartRulesTest {
         hasHeaders: Boolean = true,
         fetchOpen: Boolean = false,
         holdUntil: Long? = null,
-    ) = StartRules.decideFetch(wiping, runWorkerActive, hasHeaders, fetchOpen, holdUntil, now)
+        edgeHoldUntil: Long? = null,
+    ) = StartRules.decideFetch(wiping, runWorkerActive, hasHeaders, fetchOpen, holdUntil, now, edgeHoldUntil)
 
     @Test
     fun aDifferentOpenRunRefusesNamingIt() {
@@ -103,9 +105,24 @@ class StartRulesTest {
 
     @Test
     fun anEdgeHoldRefusesTheResumeUntilItEnds() {
+        assertEquals(FetchDecision.Refuse(FetchRefusal.HELD, now + 5), fetch(fetchOpen = true, edgeHoldUntil = now + 5))
+        assertEquals(FetchDecision.Resume, fetch(fetchOpen = true, edgeHoldUntil = now))
+        // The edge hold is app-wide: a new fetch (after Stop, or after the last one ended) is held as well.
+        assertEquals(FetchDecision.Refuse(FetchRefusal.HELD, now + 5), fetch(fetchOpen = false, edgeHoldUntil = now + 5))
+        assertEquals(FetchDecision.Start, fetch(fetchOpen = false, edgeHoldUntil = now))
+        // An open fetch's own hold (quiet hours, the cap) holds its Resume; an ended one's does not hold a new fetch.
         assertEquals(FetchDecision.Refuse(FetchRefusal.HELD, now + 5), fetch(fetchOpen = true, holdUntil = now + 5))
-        assertEquals(FetchDecision.Resume, fetch(fetchOpen = true, holdUntil = now))
-        // A new fetch is not held by an ended one's hold.
         assertEquals(FetchDecision.Start, fetch(holdUntil = now + 5))
+        // The later of the two holds wins.
+        assertEquals(FetchDecision.Refuse(FetchRefusal.HELD, now + 9), fetch(fetchOpen = true, holdUntil = now + 5, edgeHoldUntil = now + 9))
+    }
+
+    @Test
+    fun theAppWideEdgeHoldRefusesARealRunsStartAndResumeButNotADryRun() {
+        assertEquals(StartDecision.Refuse(StartRefusal.HELD, notBefore = now + 7), decide(edgeHoldUntil = now + 7))
+        assertEquals(StartDecision.Refuse(StartRefusal.HELD, notBefore = now + 7), decide(startedAt = 5, edgeHoldUntil = now + 7))
+        assertEquals(StartDecision.Refuse(StartRefusal.HELD, notBefore = now + 9), decide(startedAt = 5, holdUntil = now + 9, edgeHoldUntil = now + 7))
+        assertEquals(StartDecision.Start, decide(edgeHoldUntil = now))
+        assertEquals(StartDecision.Start, decide(dryRun = true, edgeHoldUntil = now + 7))
     }
 }

@@ -132,4 +132,48 @@ class HostAllowlistTest {
             }
         }
     }
+
+    /** The production interceptor's own shape check (the second layer), on a fake chain: refused, never proceeded. */
+    @Test fun theInterceptorRefusesARequestOutsideTheFourWithoutProceeding() {
+        for (req in listOf(
+            okhttp3.Request.Builder().url("https://discord.com/api/v9/users/@me/channels").post(okhttp3.RequestBody.EMPTY).build(),
+            okhttp3.Request.Builder().url("https://discord.com/api/v9/channels/1/messages/search?content=x").build(),
+            okhttp3.Request.Builder().url("https://discord.com/api/v9/guilds/1/channels").build(),
+        )) {
+            var proceeded = 0
+            val chain = java.lang.reflect.Proxy.newProxyInstance(
+                okhttp3.Interceptor.Chain::class.java.classLoader, arrayOf(okhttp3.Interceptor.Chain::class.java),
+            ) { _, method, _ ->
+                when (method.name) {
+                    "request" -> req
+                    "proceed" -> { proceeded++; throw AssertionError("proceeded") }
+                    else -> throw UnsupportedOperationException(method.name)
+                }
+            } as okhttp3.Interceptor.Chain
+            try {
+                HostAllowlist().intercept(chain); fail("allowed ${req.method} ${req.url}")
+            } catch (_: RequestNotAllowedException) {
+            }
+            assertEquals(0, proceeded)
+        }
+        // An allowed read on the allowed host does proceed.
+        var proceeded = 0
+        val ok = okhttp3.Request.Builder().url("https://discord.com/api/v9/users/@me").build()
+        val chain = java.lang.reflect.Proxy.newProxyInstance(
+            okhttp3.Interceptor.Chain::class.java.classLoader, arrayOf(okhttp3.Interceptor.Chain::class.java),
+        ) { _, method, _ ->
+            when (method.name) {
+                "request" -> ok
+                "proceed" -> { proceeded++; okhttp3.Response.Builder().request(ok).protocol(okhttp3.Protocol.HTTP_1_1).code(200).message("OK").build() }
+                else -> throw UnsupportedOperationException(method.name)
+            }
+        } as okhttp3.Interceptor.Chain
+        assertEquals(200, HostAllowlist().intercept(chain).code)
+        assertEquals(1, proceeded)
+    }
+
+    @Test fun bothRefusalsAreMarkedAsRefusedBeforeSending() {
+        assertTrue(HostNotAllowedException("x", "https") is app.discoredact.core.executor.RefusedBeforeSending)
+        assertTrue(RequestNotAllowedException("POST") is app.discoredact.core.executor.RefusedBeforeSending)
+    }
 }

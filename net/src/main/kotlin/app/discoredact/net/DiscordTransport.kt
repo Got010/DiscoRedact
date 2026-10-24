@@ -139,8 +139,11 @@ class DiscordTransport internal constructor(
         const val ORIGIN = "https://discord.com"
         private const val MAX_BODY_BYTES = 64L * 1024
 
-        /** A history page: 100 messages of up to 4,000 characters with their embeds and authors fit many times over. */
-        internal const val MAX_READ_BODY_BYTES = 8L * 1024 * 1024
+        /**
+         * A history page: 100 messages of up to 4,000 characters is about 1.2 MB at worst before embeds. The cap
+         * keeps a pathological body from needing hundreds of MB as a parsed tree.
+         */
+        internal const val MAX_READ_BODY_BYTES = 2L * 1024 * 1024
 
         /** The production transport: the allowlist first, one request at a time, nothing cached or followed. */
         fun production(): DiscordTransport = DiscordTransport(buildClient(HostAllowlist()), PRODUCTION_BASE_URL)

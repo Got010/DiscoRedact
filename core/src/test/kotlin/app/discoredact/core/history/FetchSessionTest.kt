@@ -463,4 +463,40 @@ class FetchSessionTest {
         assertEquals("Finished: every listed DM was read", FetchSession.describe(Executor.STOP_DONE, 5, 1))
         assertTrue(FetchSession.describe(FetchSession.STOP_NO_ACCOUNT_ID, null, 1).startsWith("Paused"))
     }
+
+    @Test fun fiveForbiddenDmsTripTheTripwireAtTheFifth() {
+        listed(10, 20, 30, 40, 50, 60)
+        repeat(6) { transport.enqueue(Responses.noAccess) }
+        val end = run() as SessionEnd.Halted
+        assertEquals(HaltReason.TRIPWIRE, end.reason)
+        assertEquals(403, end.status)
+        assertEquals(5, transport.reads.size)
+        assertEquals(listOf(10L, 20L, 30L, 40L, 50L), transport.reads.map { (it as GetRequest.Messages).channelId })
+        assertEquals(FetchProgress(60, null, false), store.progress[60])
+    }
+
+    @Test fun aSuccessfulReadOpensADmAn403OrA404HadClosed() {
+        listed(10, 20, 30)
+        store.channels[10]!!.state = ChannelState.INACCESSIBLE; store.channels[10]!!.error = "403 50001"
+        store.channels[20]!!.state = ChannelState.GONE; store.channels[20]!!.error = "404 10003"
+        store.channels[30]!!.state = ChannelState.DONE
+        transport.enqueue(page(emptyList()), page(emptyList()), page(emptyList()))
+        assertEquals(SessionEnd.Done, run())
+        assertEquals(ChannelState.PENDING, store.channels[10]!!.state)
+        assertNull(store.channels[10]!!.error)
+        assertEquals(ChannelState.PENDING, store.channels[20]!!.state)
+        assertEquals(ChannelState.DONE, store.channels[30]!!.state)
+    }
+
+    @Test fun aRequestTheTransportRefusesHaltsNamedAndSendsNothing() {
+        listed(10)
+        class Refused : java.io.IOException("refused"), app.discoredact.core.executor.RefusedBeforeSending
+        transport.enqueue(Refused())
+        val end = run() as SessionEnd.Halted
+        assertEquals(HaltReason.REFUSED_LOCALLY, end.reason)
+        assertEquals("halted:refused_locally", store.fetch!!.stopReason)
+        assertEquals(0, store.readsOn(day))
+        assertEquals(FetchProgress(10, null, false), store.progress[10])
+        assertTrue(store.actions().contains("HALT refused_locally"))
+    }
 }
