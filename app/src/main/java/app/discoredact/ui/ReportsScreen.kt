@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import app.discoredact.core.executor.Executor
 import app.discoredact.core.model.ChannelState
 import app.discoredact.core.model.MessageStatus
+import app.discoredact.core.model.RowSource
 import app.discoredact.core.report.LeftoversCsv
 import app.discoredact.data.RoomRunStore
 import app.discoredact.data.RunErrorGroup
@@ -59,6 +60,7 @@ fun ReportsScreen(vm: AppViewModel) {
     val kept by vm.keptCount.collectAsState()
     val leftovers by vm.leftoverCount.collectAsState()
     val reports by vm.reportRuns.collectAsState()
+    val sources by vm.sourceCounts.collectAsState()
     var expanded by remember { mutableStateOf(emptySet<Long>()) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri: Uri? ->
         if (uri != null) vm.exportLeftovers(uri)
@@ -79,6 +81,15 @@ fun ReportsScreen(vm: AppViewModel) {
                         HorizontalDivider()
                         CountLine("Kept (never deleted; counted in the statuses above too)", kept)
                         CountLine("Leftovers (see below)", leftovers)
+                    }
+                    // Schema 3: which import found each message. A message found by both is one row, counted once.
+                    val bySource = sources?.associate { it.source to it.count }
+                    if (bySource != null) {
+                        HorizontalDivider()
+                        Text("Found by", style = MaterialTheme.typography.titleSmall)
+                        CountLine("The data package only", bySource[RowSource.PACKAGE] ?: 0)
+                        CountLine("Fetch from Discord only", bySource[RowSource.API] ?: 0)
+                        CountLine("Both", bySource[RowSource.BOTH] ?: 0)
                     }
                 }
                 HorizontalDivider()

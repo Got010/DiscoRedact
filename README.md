@@ -1,8 +1,9 @@
 # DiscoRedact
 
 An Android app for one phone (GrapheneOS, Pixel) that deletes the owner's own messages from Discord DMs and
-group DMs on an alternate account. Message IDs come only from Discord's official data package. Requests are slow,
-sequential and header-consistent, one in flight at a time, far under every documented limit.
+group DMs on an alternate account. Message IDs come from Discord's official data package or, from 0.3.0, from the
+account's own open DMs read through Discord's API ("Fetch from Discord", below). Requests are slow, sequential and
+header-consistent, one in flight at a time, far under every documented limit.
 
 This automates a user token against Discord's API, which Discord's terms forbid however it is paced. The design
 reduces the signals; it does not make the activity allowed. Alternate account only.
@@ -20,6 +21,7 @@ the credential import ("Copy as cURL" from a desktop browser, or the five fields
 the capture age with the 14-day staleness warning, and the wipe; the canary (5 real deletes, verified in the client)
 passed. Milestone 4: the Reports screen, the leftovers CSV export, the fuller wipe, and signed releases on GitHub
 Releases (see Releases below). 0.2.0: the sign-in on the phone itself, so the capture needs no desktop (below).
+0.3.0: Fetch from Discord, a second import that makes the data package optional (below).
 
 ## Signing in on the phone
 
@@ -38,14 +40,41 @@ in here" is off while a run is active or a wipe is running. The filter's known l
 in the page and reads request headers only. The executor, the transport and its `discord.com` allowlist are unchanged:
 deletes still go through the app's own client. The cURL paste stays as the fallback.
 
+## Fetch from Discord
+
+Channels, Import, "Fetch from Discord" shows a notice first, then reads with the stored headers, one request at a time:
+the account's own id (`GET /users/@me`), the list of its open DMs and group DMs (`GET /users/@me/channels`), and each
+DM's history, 100 messages per request, newest first (`GET /channels/{id}/messages?limit=100`, then `&before=` the
+oldest id read, until a page has fewer than 100). Only messages whose author is the account are kept; everyone else's
+are read and dropped in memory. They go into the same channel and message lists the data package fills, so browsing,
+filters, Keep, the final review, the dry run and the deletes work on them unchanged. A message found by both imports is
+one row (marked "both"); neither import changes a row's selection, Keep mark or status.
+
+What it cannot find: Discord lists only the DMs that are open in the DM list. A DM the account closed (the X beside it)
+or a group DM it left is not listed, although its messages still exist; the data package is still the way to them.
+The package is optional, not replaced.
+
+The reads are paced and halted exactly as the deletes: the preset's delay and jitter, the pause between DMs, Discord's
+rate-limit headers, quiet hours, the daily cap, the tripwire at
+five invalid responses in ten minutes, and the halts on 401, a captcha, an edge block or an unknown error. Each DM's
+progress (the oldest id read, done or not) is written per page before the next request, so after a kill or reboot at
+most the page in flight is read again (its rows are already there; nothing is doubled). A read's 403 or 404 marks that
+DM inaccessible or gone, as a delete's does, which keeps it out of later runs; a later fetch that reads it opens it
+again. An edge block (a non-API answer) holds runs and fetches alike for an hour, whichever met it; Stop and a new
+fetch do not lift it. The daily cap counts the day's reads and deletes together, for runs and fetches alike. A fetch is not a run: it deletes nothing and leaves the Dry run setting as it is. A fetch needs
+stored credentials and does not start beside an active run (nor a run beside an active fetch). About one request per
+100 messages (everyone's) per DM, plus one per DM, plus two; at the Slower preset 1,000 reads take about 75 minutes.
+
 ## Layout
 
 - `core/` - plain Kotlin (JVM): the data-package parser, the selection rules (keep > manual toggle > filter, the
   frozen set and the delete guard), the pacing presets, the response classifier and the executor (the transport is
-  an interface; `:core` names no network API). JVM tests: `./gradlew :core:test`; the executor's fakes are test
+  an interface; `:core` names no network API), and the Fetch import's pure parts (`history/`: the author filter
+  `HistoryRows.own`, the DM list and pagination, and `FetchSession`, the read-side executor). JVM tests: `./gradlew :core:test`; the executor's fakes are test
   fixtures shared with `:net`.
-- `net/` - plain Kotlin (JVM): the one OkHttp client, the host allowlist, the `DELETE` request with the captured
-  headers sent verbatim. The only module that names a network API. Its tests run the executor through the real
+- `net/` - plain Kotlin (JVM): the one OkHttp client, the host allowlist with the request-shape check (the delete
+  and the three reads, nothing else), the `DELETE` request and the Fetch import's `GET`s with the captured headers
+  sent verbatim. The only module that names a network API. Its tests run the executor through the real
   client against a mock server. JVM tests: `./gradlew :net:test`.
 - `app/` - Android (Compose, Room, WorkManager): screens, database, the run worker, glue. Room schemas are
   committed under `app/schemas/`.
@@ -77,7 +106,10 @@ runnable one; the executor relies on this (`RunRules` in `:core`). A run that wa
 paused, halted or waiting) is neither superseded nor "runnable": it is resumable, and it comes before a newer frozen
 run (Stop it to start another). Schema 2 adds `run_options` (dry run, order, a hold before resuming), `run_results`
 (a dry run's verdicts) and `delete_log` (every real deletion; the daily cap counts these since local midnight).
-The `events` log keeps its newest 5,000 rows and never holds a header value or a message's text.
+The `events` log keeps its newest 5,000 rows and never holds a header value or a message's text. Schema 3 (0.3.0) adds
+`source` to `channels` and `messages` (`PACKAGE`, `API` or `BOTH`; every row from before is `PACKAGE`) and
+`fetch_progress` (each listed DM's oldest id read and whether it is done); a fetch's events are the log's rows with no
+run, and the fetch's own state, the account id and the day's read count live in the settings file.
 
 Builds run in CI (`.github/workflows/build.yml`). Dependencies are pinned by SHA-256 in
 `gradle/verification-metadata.xml` and enforced with `--dependency-verification=strict`; local builds on macOS or

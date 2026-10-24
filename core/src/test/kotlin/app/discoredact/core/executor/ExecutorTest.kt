@@ -84,6 +84,7 @@ class ExecutorTest {
                 if (request.messageId == 101L) store.messages[102]!!.keep = true // the user stars 102 while 101 is in flight
                 return Responses.ok
             }
+            override fun get(request: GetRequest, headers: HeaderSet): ApiResponse = throw AssertionError("a run never reads")
         }
         run(executor(t = t))
         assertEquals(listOf(101L, 103L, 201L, 202L), transport.requests.map { it.messageId })
@@ -295,6 +296,7 @@ class ExecutorTest {
         store.messages[202]!!.status = MessageStatus.DELETED
         val e = executor(t = object : Transport {
             override fun send(request: DeleteRequest, headers: HeaderSet): ApiResponse = throw AssertionError("a dry run must not send")
+            override fun get(request: GetRequest, headers: HeaderSet): ApiResponse = throw AssertionError("a run never reads")
         }, cs = EmptyCredentialStore)
         assertEquals(SessionEnd.Done, run(e, dry = true))
         // Kept and non-pending messages never reach the guard (the candidate query excludes them); the report derives
@@ -413,6 +415,7 @@ class ExecutorTest {
                 Thread.sleep(30)
                 return transport.send(request, headers)
             }
+            override fun get(request: GetRequest, headers: HeaderSet): ApiResponse = throw AssertionError("a run never reads")
         }
         val a = Executor(store, slow, creds, config.copy(baseDelayMs = 0, jitterMaxMs = 0, channelSwitchMinMs = 0, channelSwitchMaxMs = 0), clock, Sleeper {}, Random(1), sendMutex = lock)
         val b = Executor(store, slow, creds, config.copy(baseDelayMs = 0, jitterMaxMs = 0, channelSwitchMinMs = 0, channelSwitchMaxMs = 0), clock, Sleeper {}, Random(2), sendMutex = lock)
@@ -456,5 +459,29 @@ class ExecutorTest {
         }
         assertTrue("stopped early: ${store.verdicts.size}", store.verdicts.size < 50)
         assertNull(store.runs[1]!!.endedAt)
+    }
+
+    @Test fun theFetchsReadsOfTheDayCountTowardTheRunsCap() {
+        twoChannels()
+        val midnight = LocalDateTime.of(2026, 10, 21, 0, 0).atZone(clock.zone).toInstant().toEpochMilli()
+        store.readsByDay[midnight] = config.dailyCap
+        val end = run()
+        assertTrue(end is SessionEnd.CapUntil)
+        assertTrue(transport.requests.isEmpty())
+        // With room for two, the run sends two and stops at the cap.
+        store.readsByDay[midnight] = config.dailyCap - 2
+        assertTrue(run() is SessionEnd.CapUntil)
+        assertEquals(2, transport.requests.size)
+    }
+
+    @Test fun aRequestTheTransportRefusesHaltsNamedAndLeavesTheMessagePending() {
+        twoChannels()
+        class Refused : java.io.IOException("refused"), RefusedBeforeSending
+        transport.enqueue(Refused())
+        val end = run() as SessionEnd.Halted
+        assertEquals(HaltReason.REFUSED_LOCALLY, end.reason)
+        assertEquals(MessageStatus.PENDING, store.messages[101]!!.status)
+        assertEquals("halted:refused_locally", store.runs[1]!!.stopReason)
+        assertTrue(store.deleteLog.isEmpty())
     }
 }

@@ -23,6 +23,8 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -36,6 +38,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -44,6 +49,7 @@ import app.discoredact.core.model.ChannelType
 import app.discoredact.core.model.DmMode
 import app.discoredact.data.ChannelSummary
 import app.discoredact.data.ImportState
+import app.discoredact.work.RunScheduler
 
 fun modeLabel(mode: DmMode) = when (mode) {
     DmMode.DELETE_SELECTED -> "Delete selected"
@@ -76,7 +82,7 @@ fun ChannelsScreen(vm: AppViewModel) {
                     val runCount by vm.runCount.collectAsState()
                     if (runCount > 0) TextButton(onClick = { vm.go(Route.Run) }) { Text("Run") }
                     if (!summaries.isNullOrEmpty()) TextButton(onClick = { vm.go(Route.Reports) }) { Text("Reports") }
-                    TextButton(onClick = { vm.go(Route.Import) }) { Text("Import") }
+                    ImportMenu(vm)
                     IconButton(onClick = { vm.go(Route.Settings) }) { Icon(Icons.Filled.Settings, contentDescription = "Settings") }
                 },
             )
@@ -92,9 +98,38 @@ fun ChannelsScreen(vm: AppViewModel) {
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).clickable { vm.go(Route.Import) },
                 )
             }
+            FetchBanner(vm)
             ChannelsBody(vm, list, settings.dryRun)
         }
     }
+}
+
+/** "Import" opens the two imports: the data package, and Fetch from Discord (0.3.0). */
+@Composable
+private fun ImportMenu(vm: AppViewModel) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        TextButton(onClick = { open = true }) { Text("Import") }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(text = { Text("Import data package") }, onClick = { open = false; vm.go(Route.Import) })
+            DropdownMenuItem(text = { Text("Fetch from Discord") }, onClick = { open = false; vm.openFetch() })
+        }
+    }
+}
+
+/** While a fetch is open (running, paused, waiting or interrupted), a line that leads back to it. */
+@Composable
+private fun FetchBanner(vm: AppViewModel) {
+    val view by vm.fetchView.collectAsState()
+    val work by vm.fetchWork.collectAsState()
+    val open = view?.snapshot?.endedAt == null && view != null
+    if (!open && work == RunScheduler.WorkState.NONE) return
+    Badge(
+        text = "Fetch from Discord: " + if (work == RunScheduler.WorkState.RUNNING) "running" else "open (tap to see it)",
+        container = MaterialTheme.colorScheme.secondaryContainer,
+        content = MaterialTheme.colorScheme.onSecondaryContainer,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).clickable { vm.go(Route.Fetch) },
+    )
 }
 
 @Composable
@@ -105,9 +140,14 @@ private fun ChannelsBody(vm: AppViewModel, list: List<ChannelSummary>?, dryRun: 
                 CircularProgressIndicator(Modifier.padding(32.dp))
             }
             list.isEmpty() -> Column(Modifier.padding(24.dp).fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text("No data package imported yet.", style = MaterialTheme.typography.titleMedium)
+                Text("No messages yet.", style = MaterialTheme.typography.titleMedium)
                 Text("Pick the ZIP of your Discord data package. Only its messages folder is read; account, activity, servers and everything else are ignored.")
                 Button(onClick = { vm.go(Route.Import) }) { Text("Import data package") }
+                Text(
+                    "Or read your open DMs straight from Discord with the stored credentials. Only your own messages are kept; " +
+                        "closed and left DMs are not found this way.",
+                )
+                OutlinedButton(onClick = { vm.openFetch() }) { Text("Fetch from Discord") }
             }
             else -> Column(Modifier.fillMaxSize()) {
                 val total = list.sumOf { it.willDelete }

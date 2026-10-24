@@ -61,6 +61,12 @@ interface RunStore {
     /** Real deletions recorded at or after [sinceMs]. */
     fun deletedSince(sinceMs: Long): Int
 
+    /**
+     * Reads the Fetch import sent on the local day starting at [dayStartMs]. The daily cap protects the account, not
+     * the operation, so a run counts them with its deletes (B34 API history, section 4).
+     */
+    fun readsOn(dayStartMs: Long): Int
+
     /** Timestamps of the invalid responses (401, 403, 429 not shared) logged at or after [sinceMs], to seed the tripwire. */
     fun invalidResponseTimesSince(sinceMs: Long): List<Long>
 

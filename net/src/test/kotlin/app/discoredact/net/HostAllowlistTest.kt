@@ -1,6 +1,7 @@
 package app.discoredact.net
 
 import app.discoredact.core.executor.DeleteRequest
+import app.discoredact.core.executor.GetRequest
 import app.discoredact.core.executor.TEST_HEADERS
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.Assert.assertEquals
@@ -55,5 +56,124 @@ class HostAllowlistTest {
         assertNull(client.cache)
         assertEquals(okhttp3.CookieJar.NO_COOKIES, client.cookieJar)
         assertTrue(!client.followRedirects && !client.followSslRedirects && !client.retryOnConnectionFailure)
+    }
+
+    @Test fun onlyTheFourRequestsPassTheShapeCheck() {
+        val base = "https://discord.com/api/v9"
+        val allowed = listOf(
+            "DELETE" to "$base/channels/10/messages/20",
+            "GET" to "$base/users/@me",
+            "GET" to "$base/users/@me/channels",
+            "GET" to "$base/channels/10/messages?limit=100",
+            "GET" to "$base/channels/10/messages?limit=100&before=99",
+        )
+        for ((m, u) in allowed) assertTrue("$m $u", RequestShape.allowed(m, u.toHttpUrl()))
+        val refused = listOf(
+            "GET" to "$base/users/@me/guilds",
+            "GET" to "$base/users/@me/relationships",
+            "GET" to "$base/users/123",
+            "GET" to "$base/users/123/profile",
+            "GET" to "$base/channels/10",
+            "GET" to "$base/channels/10/messages",
+            "GET" to "$base/channels/10/messages?limit=50",
+            "GET" to "$base/channels/10/messages?limit=100&around=5",
+            "GET" to "$base/channels/10/messages?limit=100&after=5",
+            "GET" to "$base/channels/10/messages?before=5&limit=100",
+            "GET" to "$base/channels/10/messages?limit=100&before=5&x=1",
+            "GET" to "$base/channels/10/messages?limit=100&before=abc",
+            "GET" to "$base/channels/10/messages/search?content=x",
+            "GET" to "$base/channels/10/messages/20",
+            "GET" to "$base/guilds/1/messages/search?author_id=2",
+            "GET" to "$base/guilds/1/channels",
+            "GET" to "$base/users/@me?with_analytics_token=true",
+            "GET" to "$base/gateway",
+            "GET" to "https://discord.com/api/v10/users/@me",
+            "GET" to "https://discord.com/users/@me",
+            "GET" to "$base/channels/abc/messages?limit=100",
+            "GET" to "$base/users/@me#x",
+            "POST" to "$base/users/@me/channels",
+            "POST" to "$base/channels/10/messages/bulk-delete",
+            "PATCH" to "$base/channels/10/messages/20",
+            "PUT" to "$base/users/@me",
+            "HEAD" to "$base/users/@me",
+            "DELETE" to "$base/channels/10/messages",
+            "DELETE" to "$base/channels/10/messages/20?x=1",
+            "DELETE" to "$base/channels/10",
+        )
+        for ((m, u) in refused) {
+            assertTrue("$m $u", !RequestShape.allowed(m, u.toHttpUrl()))
+            try {
+                RequestShape.check(m, u.toHttpUrl()); fail("allowed $m $u")
+            } catch (e: RequestNotAllowedException) {
+                assertTrue(e.message!!.contains("not one of the four"))
+            }
+        }
+    }
+
+    @Test fun theProductionReadsAreBuiltFromTheShapesOnly() {
+        val t = DiscordTransport.production()
+        assertEquals("https://discord.com/api/v9/users/@me", t.urlOf(GetRequest.Me).toString())
+        assertEquals("https://discord.com/api/v9/users/@me/channels", t.urlOf(GetRequest.MyChannels).toString())
+        assertEquals("https://discord.com/api/v9/channels/7/messages?limit=100", t.urlOf(GetRequest.Messages(7, null)).toString())
+        assertEquals("https://discord.com/api/v9/channels/7/messages?limit=100&before=8", t.urlOf(GetRequest.Messages(7, 8)).toString())
+        for (r in listOf(GetRequest.Me, GetRequest.MyChannels, GetRequest.Messages(7, null), GetRequest.Messages(7, 8))) {
+            assertTrue(RequestShape.allowed("GET", t.urlOf(r)))
+        }
+    }
+
+    @Test fun aReadToAnyOtherHostIsRefusedBeforeAnyConnection() {
+        for (base in listOf("https://cdn.discordapp.com/api/v9", "https://discord.com.evil/api/v9", "http://discord.com/api/v9", "https://gateway.discord.gg/api/v9")) {
+            val t = DiscordTransport.forTests(base, HostAllowlist())
+            for (r in listOf(GetRequest.Me, GetRequest.MyChannels, GetRequest.Messages(1, 2))) {
+                try {
+                    t.get(r, TEST_HEADERS); fail("read from $base")
+                } catch (_: HostNotAllowedException) {
+                }
+            }
+        }
+    }
+
+    /** The production interceptor's own shape check (the second layer), on a fake chain: refused, never proceeded. */
+    @Test fun theInterceptorRefusesARequestOutsideTheFourWithoutProceeding() {
+        for (req in listOf(
+            okhttp3.Request.Builder().url("https://discord.com/api/v9/users/@me/channels").post(okhttp3.RequestBody.EMPTY).build(),
+            okhttp3.Request.Builder().url("https://discord.com/api/v9/channels/1/messages/search?content=x").build(),
+            okhttp3.Request.Builder().url("https://discord.com/api/v9/guilds/1/channels").build(),
+        )) {
+            var proceeded = 0
+            val chain = java.lang.reflect.Proxy.newProxyInstance(
+                okhttp3.Interceptor.Chain::class.java.classLoader, arrayOf(okhttp3.Interceptor.Chain::class.java),
+            ) { _, method, _ ->
+                when (method.name) {
+                    "request" -> req
+                    "proceed" -> { proceeded++; throw AssertionError("proceeded") }
+                    else -> throw UnsupportedOperationException(method.name)
+                }
+            } as okhttp3.Interceptor.Chain
+            try {
+                HostAllowlist().intercept(chain); fail("allowed ${req.method} ${req.url}")
+            } catch (_: RequestNotAllowedException) {
+            }
+            assertEquals(0, proceeded)
+        }
+        // An allowed read on the allowed host does proceed.
+        var proceeded = 0
+        val ok = okhttp3.Request.Builder().url("https://discord.com/api/v9/users/@me").build()
+        val chain = java.lang.reflect.Proxy.newProxyInstance(
+            okhttp3.Interceptor.Chain::class.java.classLoader, arrayOf(okhttp3.Interceptor.Chain::class.java),
+        ) { _, method, _ ->
+            when (method.name) {
+                "request" -> ok
+                "proceed" -> { proceeded++; okhttp3.Response.Builder().request(ok).protocol(okhttp3.Protocol.HTTP_1_1).code(200).message("OK").build() }
+                else -> throw UnsupportedOperationException(method.name)
+            }
+        } as okhttp3.Interceptor.Chain
+        assertEquals(200, HostAllowlist().intercept(chain).code)
+        assertEquals(1, proceeded)
+    }
+
+    @Test fun bothRefusalsAreMarkedAsRefusedBeforeSending() {
+        assertTrue(HostNotAllowedException("x", "https") is app.discoredact.core.executor.RefusedBeforeSending)
+        assertTrue(RequestNotAllowedException("POST") is app.discoredact.core.executor.RefusedBeforeSending)
     }
 }

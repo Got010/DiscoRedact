@@ -30,12 +30,20 @@ class FakeSleeper(private val clock: FakeClock) : Sleeper {
     }
 }
 
-/** Scripted responses in order; records every request and every header set it was given. */
+/**
+ * Scripted responses in order; records every request and every header set it was given. Deletes and reads share the
+ * script; [inFlight] and [maxInFlight] count overlapping calls (never more than one).
+ */
 class FakeTransport(vararg script: Any) : Transport {
     private val queue = ArrayDeque<Any>(script.toList())
     val requests = ArrayList<DeleteRequest>()
+    val reads = ArrayList<GetRequest>()
     val headersSeen = ArrayList<HeaderSet>()
     var default: Any = ApiResponse(204, emptyMap(), "")
+    /** A read's answer when the script is empty; null means [default]. */
+    var readDefault: ((GetRequest) -> Any)? = null
+    @Volatile var inFlight = 0
+    @Volatile var maxInFlight = 0
     fun enqueue(vararg r: Any) = queue.addAll(r.toList())
 
     override fun send(request: DeleteRequest, headers: HeaderSet): ApiResponse {
@@ -44,6 +52,20 @@ class FakeTransport(vararg script: Any) : Transport {
         val next = queue.removeFirstOrNull() ?: default
         if (next is Throwable) throw next
         return next as ApiResponse
+    }
+
+    override fun get(request: GetRequest, headers: HeaderSet): ApiResponse {
+        inFlight++
+        maxInFlight = maxOf(maxInFlight, inFlight)
+        try {
+            reads.add(request)
+            headersSeen.add(headers)
+            val next = queue.removeFirstOrNull() ?: readDefault?.invoke(request) ?: default
+            if (next is Throwable) throw next
+            return next as ApiResponse
+        } finally {
+            inFlight--
+        }
     }
 }
 
@@ -61,6 +83,8 @@ class FakeStore : RunStore {
     val events = ArrayList<EventRecord>()
     val deleteLog = ArrayList<Pair<Long, Long>>()
     val verdicts = LinkedHashMap<Long, DryVerdict>()
+    /** The Fetch import's reads per local day (the daily cap counts them with the deletes). */
+    val readsByDay = HashMap<Long, Int>()
 
     fun channel(id: Long, vararg messageIds: Long) {
         channelStates[id] = ChannelState.PENDING
@@ -108,6 +132,7 @@ class FakeStore : RunStore {
     override fun dryVerdict(runId: Long, messageId: Long, verdict: DryVerdict) { verdicts[messageId] = verdict }
     override fun event(event: EventRecord) { events.add(event) }
     override fun deletedSince(sinceMs: Long): Int = deleteLog.count { it.second >= sinceMs }
+    override fun readsOn(dayStartMs: Long): Int = readsByDay[dayStartMs] ?: 0
     override fun invalidResponseTimesSince(sinceMs: Long): List<Long> = events.filter {
         it.ts >= sinceMs && (it.httpStatus == 401 || it.httpStatus == 403 || (it.httpStatus == 429 && it.actionTaken != "RATE_LIMITED shared"))
     }.map { it.ts }

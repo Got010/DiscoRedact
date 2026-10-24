@@ -19,6 +19,9 @@ import app.discoredact.core.selection.MessageFilter
 import app.discoredact.core.selection.StartDecision
 import app.discoredact.core.selection.StartRefusal
 import app.discoredact.core.selection.StartRules
+import app.discoredact.core.selection.FetchDecision
+import app.discoredact.core.selection.FetchRefusal
+import app.discoredact.core.history.FetchSession
 import app.discoredact.core.report.LeftoversCsv
 import app.discoredact.core.executor.CredentialState
 import app.discoredact.core.executor.CurlParser
@@ -36,8 +39,12 @@ import app.discoredact.data.RunChannelLine
 import app.discoredact.data.RunOptionsEntity
 import app.discoredact.data.RunReport
 import app.discoredact.data.StatusCount
+import app.discoredact.data.SourceCount
+import app.discoredact.data.FetchCounts
+import app.discoredact.data.FetchView
 import app.discoredact.data.RunProgress
 import app.discoredact.work.RunScheduler
+import app.discoredact.work.FetchScheduler
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -73,6 +80,12 @@ sealed interface Route {
     data object Credentials : Route
     data object SignIn : Route
     data object Reports : Route
+
+    /** "Fetch from Discord": the notice that comes first (what is read, what is not found, the estimate). */
+    data object FetchNotice : Route
+
+    /** The running, paused or finished fetch. */
+    data object Fetch : Route
 }
 
 /** Loads a long list a page at a time (no Paging dependency). Pages load off the main thread. */
@@ -200,6 +213,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** A message for the Run screen. */
     var runNotice by mutableStateOf<String?>(null)
 
+    // ---- Fetch from Discord (0.3.0): the fetch's state, its progress rows and its events. -----------------------
+
+    private val fetchScheduler = FetchScheduler(app)
+    val fetchWork: StateFlow<RunScheduler.WorkState> =
+        fetchScheduler.observeActive().stateIn(viewModelScope, SharingStarted.Eagerly, RunScheduler.WorkState.NONE)
+    val fetchView: StateFlow<FetchView?> = graph.fetchState.state
+    val fetchCounts: StateFlow<FetchCounts?> =
+        generation.flatMapLatest { repo.observeFetchCounts() }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    val fetchEvents: StateFlow<List<EventEntity>> =
+        generation.flatMapLatest { repo.observeFetchEvents(100) }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** A message for the fetch screens (a refusal, a failure). */
+    var fetchNotice by mutableStateOf<String?>(null)
+
     // ---- Reports (M4): read only while the Reports screen is on screen (WhileSubscribed), so a run's writes do not ----
     // ---- re-run these queries when nobody is looking. ------------------------------------------------------------
 
@@ -212,6 +239,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         generation.flatMapLatest { repo.observeLeftoverCount() }.stateIn(viewModelScope, whileShown, 0)
     val reportRuns: StateFlow<List<RunReport>?> =
         generation.flatMapLatest { repo.observeRunReports() }.stateIn(viewModelScope, whileShown, null)
+    val sourceCounts: StateFlow<List<SourceCount>?> =
+        generation.flatMapLatest { repo.observeSourceCounts() }.stateIn(viewModelScope, whileShown, null)
 
     /** A run's per-channel lines, for an expanded row of the Reports screen. */
     fun observeRunChannelLines(runId: Long) = generation.flatMapLatest { repo.observeChannelLines(runId) }
@@ -350,9 +379,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * Why "Sign in here" is off, or null. A fresh login and the page's own traffic must not run beside an active run
      * (CLAUDE.md rule 3), and nothing starts during a wipe.
      */
-    fun signInBlockedReason(work: RunScheduler.WorkState): String? = when {
+    fun signInBlockedReason(work: RunScheduler.WorkState, fetch: RunScheduler.WorkState = RunScheduler.WorkState.NONE): String? = when {
         wiping -> "Wiping"
         work != RunScheduler.WorkState.NONE -> "A run is active; pause or stop it first"
+        fetch != RunScheduler.WorkState.NONE -> "A fetch is active; pause or stop it first"
         else -> null
     }
 
@@ -397,13 +427,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** True while the run worker is running (mirrors [workState] into Compose state, so the Settings buttons follow it). */
     private var workerRunning by mutableStateOf(false)
 
+    /** True while the fetch worker is running (mirrors [fetchWork], as [workerRunning] does for runs). */
+    private var fetchRunning by mutableStateOf(false)
+
     /** Something is writing to the database: Wipe and Purge wait until it is done. */
     val busy: Boolean
-        get() = wiping || importState is ImportState.Running || filters?.applying == true || review.freezing || workerRunning || exporting
+        get() = wiping || importState is ImportState.Running || filters?.applying == true || review.freezing || workerRunning || exporting || fetchRunning
 
     /** The line under the disabled Purge and Wipe buttons; [runId] is the run to name if the worker is running. */
     fun busyNotice(runId: Long?): String? =
-        if (wiping) "Wiping..." else WipeGate.busyNotice(importState is ImportState.Running, filters?.applying == true, review.freezing, workerRunning, runId, exporting)
+        if (wiping) "Wiping..." else WipeGate.busyNotice(importState is ImportState.Running, filters?.applying == true, review.freezing, workerRunning, runId, exporting, fetchRunning)
 
     // ---- Navigation ---------------------------------------------------------------------------------------------
 
@@ -416,6 +449,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             Route.Settings -> refreshCredentialStatus()
             Route.Reports -> reportNotice = null
             is Route.Frozen -> refreshCredentialStatus()
+            Route.FetchNotice -> { fetchNotice = null; refreshCredentialStatus() }
+            Route.Fetch -> fetchNotice = null
             else -> Unit
         }
         backStack.add(route)
@@ -437,6 +472,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     init {
         viewModelScope.launch { graph.imports.state.collect { importState = it } }
         viewModelScope.launch { workState.collect { workerRunning = it == RunScheduler.WorkState.RUNNING } }
+        viewModelScope.launch { fetchWork.collect { fetchRunning = it == RunScheduler.WorkState.RUNNING } }
     }
 
     /**
@@ -614,8 +650,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             var workerLocked = false
             var sendLocked = false
             try {
-                // An open run reads "Paused" if the wipe is refused, not "interrupted".
-                withContext(Dispatchers.IO) { repo.openRunId()?.let { repo.pauseRun(it) } }
+                // An open run (and an open fetch) reads "Paused" if the wipe is refused, not "interrupted".
+                withContext(Dispatchers.IO) {
+                    repo.openRunId()?.let { repo.pauseRun(it) }
+                    graph.fetchState.paused(Executor.STOP_PAUSED_USER, null)
+                }
                 val refusal = cancelWorkerAndWait()
                 if (refusal != null) {
                     settingsNotice = refusal
@@ -677,12 +716,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Cancels the run worker and waits for WorkManager to report none enqueued or running; a refusal text, or null when clear. */
+    /**
+     * Cancels the run worker and the fetch worker and waits for WorkManager to report neither enqueued nor running; a
+     * refusal text, or null when clear.
+     */
     private suspend fun cancelWorkerAndWait(): String? {
         scheduler.cancel()
+        fetchScheduler.cancel()
         val start = System.currentTimeMillis()
         while (true) {
-            val active = scheduler.observeActive().first() != RunScheduler.WorkState.NONE
+            val active = scheduler.observeActive().first() != RunScheduler.WorkState.NONE ||
+                fetchScheduler.observeActive().first() != RunScheduler.WorkState.NONE
             when (val d = WipeGate.decide(active, System.currentTimeMillis() - start)) {
                 WipeGate.Decision.Ready -> return null
                 WipeGate.Decision.WaitForWorker -> delay(250)
@@ -696,10 +740,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setOldestFirst(on: Boolean) = graph.settings.update { it.copy(oldestFirst = on) }
 
     /** What [StartRules] needs, read off the main thread. The header set is only tested for presence, never kept. */
-    private class StartFacts(val openRunId: Long?, val startedAt: Long?, val options: RunOptionsEntity?, val hasHeaders: Boolean)
+    private class StartFacts(
+        val openRunId: Long?,
+        val startedAt: Long?,
+        val options: RunOptionsEntity?,
+        val hasHeaders: Boolean,
+        /** The app-wide edge-block hold (EdgeHold), from a run's or a fetch's halt. */
+        val edgeHoldUntil: Long?,
+    )
 
     private suspend fun startFacts(runId: Long) = withContext(Dispatchers.IO) {
-        StartFacts(repo.openRunId(), repo.runSnapshot(runId)?.startedAt, repo.runOptions(runId), graph.credentials.load() != null)
+        StartFacts(repo.openRunId(), repo.runSnapshot(runId)?.startedAt, repo.runOptions(runId), graph.credentials.load() != null, repo.edgeHoldUntil())
     }
 
     private fun refusalText(r: StartDecision.Refuse): String = when (r.reason) {
@@ -709,7 +760,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             "No credentials stored, so a real run cannot start. Import them on the Credentials screen (Settings), or switch Dry run on. Nothing was started."
         StartRefusal.NO_CREDENTIALS_RESUME ->
             "No credentials stored, so this real run cannot continue. Import them on the Credentials screen (Settings). Nothing was started."
+        StartRefusal.FETCH_ACTIVE -> "A fetch from Discord is active. Pause or stop it (Fetch screen) before a run starts. Nothing was started."
     }
+
+    /**
+     * Whether the fetch worker is enqueued or running: no run starts beside it (CLAUDE.md rule 3). Asked of WorkManager
+     * now, not read from [fetchWork], whose first value at app start is NONE until WorkManager answers.
+     */
+    private suspend fun fetchActive(): Boolean = fetchScheduler.observeActive().first() != RunScheduler.WorkState.NONE
+
+    /** Whether the run worker is enqueued or running, asked of WorkManager now (as [fetchActive]). */
+    private suspend fun runWorkerActive(): Boolean = scheduler.observeActive().first() != RunScheduler.WorkState.NONE
 
     /** Hands a run that has options to the worker with them. Nothing starts once a wipe has begun. */
     private fun continueRun(runId: Long, options: RunOptionsEntity?) {
@@ -735,7 +796,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val f = startFacts(runId)
                 // Once a run has options, its stored mode counts; the toggle only decides for a run with none yet.
                 val dryRun = f.options?.dryRun ?: s.dryRun
-                when (val d = StartRules.decide(runId, f.openRunId, f.startedAt, dryRun, f.hasHeaders, f.options?.resumeNotBefore, System.currentTimeMillis())) {
+                when (val d = StartRules.decide(runId, f.openRunId, f.startedAt, dryRun, f.hasHeaders, f.options?.resumeNotBefore, System.currentTimeMillis(), fetchActive(), f.edgeHoldUntil)) {
                     is StartDecision.Refuse -> { runNotice = refusalText(d) }
                     StartDecision.Resume -> continueRun(runId, f.options)
                     StartDecision.Start -> {
@@ -766,7 +827,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     runNotice = "This run was never started; start it from its frozen screen."
                     return@launch
                 }
-                when (val d = StartRules.decide(runId, f.openRunId, f.startedAt, options.dryRun, f.hasHeaders, options.resumeNotBefore, System.currentTimeMillis())) {
+                when (val d = StartRules.decide(runId, f.openRunId, f.startedAt, options.dryRun, f.hasHeaders, options.resumeNotBefore, System.currentTimeMillis(), fetchActive(), f.edgeHoldUntil)) {
                     is StartDecision.Refuse -> { runNotice = refusalText(d) }
                     StartDecision.Resume, StartDecision.Start -> continueRun(runId, options)
                 }
@@ -806,10 +867,127 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val hold = options.resumeNotBefore
                 if (hold != null && hold > System.currentTimeMillis()) return@withContext null
                 if (!options.dryRun && graph.credentials.load() == null) return@withContext null
+                // The app-wide edge hold (a fetch's halt included) keeps a real run waiting too.
+                val edge = repo.edgeHoldUntil()
+                if (!options.dryRun && edge != null && edge > System.currentTimeMillis()) return@withContext null
                 id to options.dryRun
-            } ?: return@launch
-            if (wiping) return@launch
+            }
+            if (resume == null) {
+                // No run to continue: a fetch that was waiting may continue instead (never both; one worker at a time).
+                resumeWaitingFetch()
+                return@launch
+            }
+            if (wiping || fetchActive()) return@launch
             scheduler.start(resume.first, resume.second)
         }
     }
+
+    // ---- Fetch from Discord (0.3.0) -----------------------------------------------------------------------------
+
+    /** The Channels screen's "Fetch from Discord": the open fetch if there is one, else the notice that comes first. */
+    fun openFetch() {
+        val open = fetchView.value?.snapshot?.let { it.endedAt == null } == true
+        go(if (open || fetchWork.value != RunScheduler.WorkState.NONE) Route.Fetch else Route.FetchNotice)
+    }
+
+    private fun fetchRefusalText(r: FetchDecision.Refuse): String = when (r.reason) {
+        FetchRefusal.WIPING -> "Wiping; nothing was started."
+        FetchRefusal.RUN_ACTIVE -> "A run is active. Pause or stop it (Run screen) before a fetch starts. Nothing was started."
+        FetchRefusal.HELD -> "Not before ${formatTime(r.notBefore ?: 0L)}."
+        FetchRefusal.NO_CREDENTIALS ->
+            "No credentials stored, so a fetch cannot start. Import them on the Credentials screen (Settings). Nothing was started."
+    }
+
+    /** What StartRules.decideFetch needs, read off the main thread. The header set is only tested for presence. */
+    private suspend fun fetchDecision(): FetchDecision {
+        val (hasHeaders, edgeHold) = withContext(Dispatchers.IO) { (graph.credentials.load() != null) to repo.edgeHoldUntil() }
+        val snap = graph.fetchState.snapshot()
+        val open = snap != null && snap.endedAt == null
+        return StartRules.decideFetch(
+            wiping, runWorkerActive(), hasHeaders, open, snap?.resumeNotBefore, System.currentTimeMillis(), edgeHold,
+        )
+    }
+
+    /**
+     * "Start fetch" on the notice: a new fetch (no progress rows; the account id and the DM list read again) unless one
+     * is open, which continues instead. A fetch is not a run: the dry-run latch is not read or changed.
+     */
+    fun startFetch() {
+        if (wiping) return
+        viewModelScope.launch {
+            try {
+                when (val d = fetchDecision()) {
+                    is FetchDecision.Refuse -> fetchNotice = fetchRefusalText(d)
+                    FetchDecision.Resume, FetchDecision.Start -> {
+                        if (d == FetchDecision.Start) {
+                            withContext(Dispatchers.IO) {
+                                repo.clearFetchProgress()
+                                graph.fetchState.begin(System.currentTimeMillis())
+                            }
+                        }
+                        if (wiping) return@launch
+                        fetchScheduler.start()
+                        fetchNotice = null
+                        if (route == Route.FetchNotice) backStack.removeAt(backStack.lastIndex)
+                        backStack.add(Route.Fetch)
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                fetchNotice = "Could not start: ${e.javaClass.simpleName}"
+            }
+        }
+    }
+
+    /** Resumes a paused, halted, waiting or interrupted fetch where its progress rows say. */
+    fun resumeFetch() {
+        if (wiping) return
+        viewModelScope.launch {
+            try {
+                when (val d = fetchDecision()) {
+                    is FetchDecision.Refuse -> fetchNotice = fetchRefusalText(d)
+                    FetchDecision.Resume -> {
+                        if (wiping) return@launch
+                        fetchScheduler.start()
+                        fetchNotice = null
+                    }
+                    FetchDecision.Start -> fetchNotice = "This fetch has ended; start a new one from the notice."
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                fetchNotice = "Could not resume: ${e.javaClass.simpleName}"
+            }
+        }
+    }
+
+    /** Pause: the worker is cancelled after the read in flight and its rows; the fetch stays open. */
+    fun pauseFetch() = viewModelScope.launch {
+        withContext(Dispatchers.IO) { graph.fetchState.paused(Executor.STOP_PAUSED_USER, null) }
+        fetchScheduler.cancel()
+    }
+
+    /** Stop: the fetch ends now (what it found stays) and the worker is cancelled after the read in flight. */
+    fun stopFetch() = viewModelScope.launch {
+        withContext(Dispatchers.IO) { graph.fetchState.ended(System.currentTimeMillis(), Executor.STOP_STOPPED) }
+        fetchScheduler.cancel()
+    }
+
+    /** A fetch waiting for quiet hours, the daily cap or the app continues on return to the foreground when its time has come. */
+    private suspend fun resumeWaitingFetch() {
+        val snap = graph.fetchState.snapshot() ?: return
+        if (snap.endedAt != null || snap.stopReason?.startsWith("waiting:") != true) return
+        val hold = snap.resumeNotBefore
+        if (hold != null && hold > System.currentTimeMillis()) return
+        if (withContext(Dispatchers.IO) { graph.credentials.load() } == null) return
+        val edge = withContext(Dispatchers.IO) { repo.edgeHoldUntil() }
+        if (edge != null && edge > System.currentTimeMillis()) return
+        if (wiping || runWorkerActive()) return
+        fetchScheduler.start()
+    }
+
+    /** The fetch's status line, in the run's words for halts (FetchSession.describe). */
+    fun describeFetch(v: FetchView?): String =
+        if (v == null) "No fetch yet." else FetchSession.describe(v.snapshot.stopReason, v.snapshot.endedAt, v.snapshot.startedAt)
 }

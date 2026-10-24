@@ -125,6 +125,23 @@ show it, it cannot refuse or list under Blocked:
 Closing the page the moment the capture lands, whenever the screen is left, and two minutes after the app goes to the
 background, limits these; it does not prevent them. The app's own client never opens any of them.
 
+## Fetch from Discord (0.3.0)
+
+From 0.3.0 the app's own client makes three reads beside the one delete (CLAUDE.md rules 1 and 4, amended), used only by
+the Fetch import, all on the existing host `discord.com` under `https://discord.com/api/v9`:
+
+- `GET /users/@me`
+- `GET /users/@me/channels`
+- `GET /channels/{channel_id}/messages?limit=100[&before={message_id}]`
+
+They are built only from `GetRequest`'s three shapes in `:core` (path segments `users`, `@me`, `channels`, `messages`,
+the query names `limit` and `before`, `limit` always `100`), and `RequestShape` in `:net` (applied by the `HostAllowlist`
+interceptor and again by `DiscordTransport` before the call) refuses any other method, path or query before the socket.
+The literals appear as strings under the existing `discord.com` and `https://discord.com` host notes; no new host,
+network type, permission, component, module, dependency or native library is expected, and the client is the same one
+(no cache, no cookies, no redirects, one request in flight). The `https://discord.com` note should name the reads beside
+the delete when `baseline.json` is regenerated from CI. The Room schema goes to 3 (`app/schemas/.../3.json`).
+
 ## When the gate fails
 
 The log lists each difference as `GATE + field: value`, `GATE - field: value` or `GATE ~ field: old -> new`, then

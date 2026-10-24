@@ -17,6 +17,10 @@ import kotlinx.coroutines.sync.Mutex
 import app.discoredact.data.Repository
 import app.discoredact.data.SettingsStore
 import app.discoredact.data.SignInStorage
+import app.discoredact.core.history.FetchStore
+import app.discoredact.core.signin.SignInSweepGate
+import app.discoredact.data.FetchStateStore
+import app.discoredact.data.RoomFetchStore
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
@@ -37,11 +41,21 @@ class Graph private constructor(private val context: Context) {
             Repository(opened).also { repo = it }
         }
 
+    /** The Fetch import's own state (the current fetch, the account id, the day's reads), in the settings file. */
+    val fetchState = FetchStateStore(context)
+
+    /** The fetch session's store, on the same database as [repository]. */
+    val fetchStore: FetchStore
+        get() = synchronized(this) {
+            repository
+            RoomFetchStore(db!!, fetchState)
+        }
+
     /** The executor's store, on the same database as [repository]. */
     val runStore: RunStore
         get() = synchronized(this) {
             repository
-            RoomRunStore(db!!)
+            RoomRunStore(db!!, fetchState)
         }
 
     /** The one network client of the app (M2). Built on first use; a dry run never touches it. */
@@ -58,31 +72,32 @@ class Graph private constructor(private val context: Context) {
     private val signInSweep: Deferred<Boolean> =
         CoroutineScope(SupervisorJob() + Dispatchers.IO).async { runCatching { SignInStorage.wipe(context) }.getOrDefault(false) }
 
-    @Volatile private var signInSwept = false
-
     /**
-     * True once the sweep has succeeded. A failed sweep is tried again on each call: no page can have run in this
-     * process before it succeeds, so deleting the directories is still safe (after Wipe everything it passes).
-     * False means the page must not load (CLAUDE.md rule 19).
+     * The start sweep counts once; a failed sweep is tried again on each ask; after Wipe everything ([wipeEverything]
+     * invalidates it) the next page sweeps again instead of trusting an earlier success, since the wipe deleted the
+     * directories while a page may have run earlier in this process (SignInSweepGate, tested in :core).
      */
-    suspend fun signInStorageClean(): Boolean {
-        if (signInSwept) return true
-        val ok = signInSweep.await() || withContext(Dispatchers.IO) { runCatching { SignInStorage.wipe(context) }.getOrDefault(false) }
-        if (ok) signInSwept = true
-        return ok
-    }
+    private val signInGate = SignInSweepGate(
+        startSweep = { signInSweep.await() },
+        sweep = { withContext(Dispatchers.IO) { runCatching { SignInStorage.wipe(context) }.getOrDefault(false) } },
+    )
 
-    /** One lock for every executor in this process: the guard re-read, the send and its row never interleave. */
+    /** True once a sweep has succeeded since process start or the last wipe. False means the page must not load (CLAUDE.md rule 19). */
+    suspend fun signInStorageClean(): Boolean = signInGate.clean()
+
+    /** One lock for every executor and fetch session in this process: a request and its rows never interleave with another. */
     val sendMutex = Mutex()
 
     /**
-     * Held by the run worker for its whole body (DeleteWorker.doWork), so "Wipe everything" can wait for the worker's
-     * real end: WorkManager reports a cancelled worker as finished before its coroutine has stopped.
+     * Held by the run worker and the fetch worker for their whole bodies (DeleteWorker.doWork, FetchWorker.doWork), so
+     * the two never run at once and "Wipe everything" can wait for a worker's real end: WorkManager reports a
+     * cancelled worker as finished before its coroutine has stopped.
      */
     val workerMutex = Mutex()
 
     /**
-     * Deletes the database (every channel, message, selection, run and event), every setting, the stored credentials
+     * Deletes the database (every channel, message, selection, run, event and fetch progress), every setting (the
+     * fetch's state and account id with them), the stored credentials
      * with their key, and whatever the sign-in page's data directories still hold (SignInStorage). Every step is tried
      * even if an earlier one failed, so a failure never leaves the credentials behind; it then throws, naming the steps
      * (never a value). The caller has stopped the import and the run worker first.
@@ -100,7 +115,11 @@ class Graph private constructor(private val context: Context) {
         repo = null
         if (!databaseGone()) failed += "database"
         if (!runCatching { settings.clear() }.getOrDefault(false)) failed += "settings"
+        // The settings file held the fetch's state and account id too (FetchStateStore); show it gone.
+        runCatching { fetchState.reload() }
         if (runCatching { credentialStore.wipe() }.getOrDefault(false).not()) failed += "credentials"
+        // Whatever happens below, the next sign-in page sweeps again before it loads.
+        signInGate.invalidate()
         if (!runCatching { SignInStorage.wipe(context) }.getOrDefault(false)) failed += "sign-in page data"
         check(failed.isEmpty()) { "not wiped: ${failed.joinToString(", ")}" }
     }

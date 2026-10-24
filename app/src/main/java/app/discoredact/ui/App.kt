@@ -28,6 +28,8 @@ fun DiscoRedactApp(vm: AppViewModel = viewModel()) {
             Route.Credentials -> CredentialsScreen(vm)
             Route.SignIn -> SignInScreen(vm)
             Route.Reports -> ReportsScreen(vm)
+            Route.FetchNotice -> FetchNoticeScreen(vm)
+            Route.Fetch -> FetchScreen(vm)
         }
     }
 }
