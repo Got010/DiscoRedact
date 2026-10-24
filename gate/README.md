@@ -99,7 +99,9 @@ the baseline gains:
 - `network_api`: the `android.webkit` types the sign-in page uses (`WebView`, `WebViewClient`, `WebSettings`,
   `WebResourceRequest`, `WebResourceResponse`, `CookieManager`, `WebStorage`, `WebViewDatabase`,
   `ServiceWorkerController`, `ServiceWorkerClient`, `ServiceWorkerWebSettings`, and any type their called methods'
-  signatures name, such as `ValueCallback`), each with a note; the CI run lists the exact set.
+  signatures name, such as `ValueCallback`; from 0.2.1 also `WebResourceError` and `RenderProcessGoneDetail`, the
+  types of the page-load callbacks that let the screen say how the login page's document loaded), each with a note;
+  the CI run lists the exact set.
 - `hosts`: the WebView's own allowlist, `SignInHosts.HOSTS` in `:core` (`discord.com`, `discordapp.com`,
   `discordapp.net`, `hcaptcha.com`), each with a note. The filter admits only https, these hosts and their subdomains,
   with no port and no user info; everything else gets an empty 403. The app's own client keeps its one-host allowlist

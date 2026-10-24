@@ -136,6 +136,9 @@ fun SignInScreen(vm: AppViewModel) {
 
 private fun statusLine(s: PageStatus): String = when (s) {
     PageStatus.Waiting -> "Sign in on Discord's page below. Waiting for a signed-in request to Discord's API."
+    is PageStatus.Loading -> "Loading Discord's page (${s.admitted} requests admitted so far)."
+    is PageStatus.Loaded -> "Discord's page loaded (${s.admitted} requests admitted). Sign in on it below; waiting for a signed-in request to Discord's API."
+    is PageStatus.Failed -> "Discord's page did not load: ${s.what}. Close and try again; if it repeats, report this line."
     PageStatus.HeadersHidden -> "The page's requests did not expose the headers; use the cURL paste. Nothing was captured."
     is PageStatus.Lacking -> "A signed-in request lacked ${s.fields.joinToString(", ")}; waiting for another. Nothing was captured yet."
 }

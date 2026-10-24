@@ -4,9 +4,12 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.graphics.Bitmap
 import android.webkit.CookieManager
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.ServiceWorkerClient
 import android.webkit.ServiceWorkerController
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
@@ -49,9 +52,22 @@ object SignInSession {
     }
 }
 
-/** What the page's requests to Discord's API showed so far; names only. */
+/**
+ * What the page did so far: how the login page's own document loaded, then what its requests to Discord's API showed.
+ * Names and counts only: never an address, a header or page content.
+ */
 sealed interface PageStatus {
     data object Waiting : PageStatus
+
+    /** The login page's document is loading; [admitted] requests have passed the host filter so far. */
+    data class Loading(val admitted: Int) : PageStatus
+
+    /** The document finished loading; [admitted] requests have passed the filter so far (the count keeps growing). */
+    data class Loaded(val admitted: Int) : PageStatus
+
+    /** The document did not load: [what] is the error's name, an HTTP status, or the renderer's end; never an address. */
+    data class Failed(val what: String) : PageStatus
+
     data object HeadersHidden : PageStatus
     data class Lacking(val fields: List<String>) : PageStatus
 }
@@ -74,6 +90,10 @@ class SignInPage(
     private val ended = AtomicBoolean(false)
     private val labels = ConcurrentHashMap.newKeySet<String>()
     private val hidden = AtomicInteger(0)
+    private val admitted = AtomicInteger(0)
+    @Volatile private var documentStarted = false
+    @Volatile private var documentFinished = false
+    @Volatile private var documentFailed = false
     @Volatile private var exposed = false
     @Volatile private var lastStatus: PageStatus? = null
     @Volatile private var userAgent = ""
@@ -104,6 +124,39 @@ class SignInPage(
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? = intercept(request)
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = refuses(request)
+
+            // The document's own loading, so a page that stays blank says why (the address is not repeated: it is the
+            // login page or a navigation the filter admitted; only names and counts reach the screen).
+            override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
+                if (ended.get()) return
+                documentStarted = true
+                loadStatus()
+            }
+
+            override fun onPageFinished(view: WebView, url: String?) {
+                if (ended.get()) return
+                documentFinished = true
+                loadStatus()
+            }
+
+            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+                if (ended.get() || !request.isForMainFrame) return
+                documentFailed = true
+                status(PageStatus.Failed("error ${error.errorCode}, ${safeText(error.description?.toString())}"))
+            }
+
+            override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, errorResponse: WebResourceResponse) {
+                if (ended.get() || !request.isForMainFrame) return
+                documentFailed = true
+                status(PageStatus.Failed("HTTP ${errorResponse.statusCode}"))
+            }
+
+            // Returning true keeps the app alive when the WebView's renderer is gone; the view shows nothing from then on.
+            override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                documentFailed = true
+                status(PageStatus.Failed(if (detail.didCrash()) "the page's renderer crashed" else "the page's renderer was stopped by the system"))
+                return true
+            }
         }
         // A service worker's requests do not pass the page's client: the same filter applies to them.
         current = this
@@ -136,7 +189,11 @@ class SignInPage(
             block(url)
             return refused()
         }
-        if (!SignInCapture.isApi(url)) return null
+        admitted.incrementAndGet()
+        if (!SignInCapture.isApi(url)) {
+            loadStatus()
+            return null
+        }
         val outcome = SignInCapture.inspect(url, request.requestHeaders ?: emptyMap(), userAgent, System.currentTimeMillis())
         when (outcome) {
             is SignInCapture.Outcome.Captured ->
@@ -148,7 +205,10 @@ class SignInPage(
                 exposed = true
                 status(PageStatus.Lacking(outcome.missing + outcome.invalid))
             }
-            SignInCapture.Outcome.NotSignedIn -> exposed = true
+            SignInCapture.Outcome.NotSignedIn -> {
+                exposed = true
+                loadStatus()
+            }
             SignInCapture.Outcome.HeadersHidden ->
                 if (hidden.incrementAndGet() >= HIDDEN_BEFORE_NOTICE && !exposed) status(PageStatus.HeadersHidden)
             SignInCapture.Outcome.NotApi -> Unit
@@ -184,6 +244,15 @@ class SignInPage(
         main.post { onStatus(s) }
     }
 
+    /** The document's loading state with the admitted count; silent once it failed or a capture outcome is showing. */
+    private fun loadStatus() {
+        if (documentFailed || !documentStarted) return
+        val last = lastStatus
+        if (last is PageStatus.Lacking || last == PageStatus.HeadersHidden) return
+        val n = admitted.get()
+        status(if (documentFinished) PageStatus.Loaded(n) else PageStatus.Loading(n))
+    }
+
     private object WorkerFilter : ServiceWorkerClient() {
         override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? {
             val page = current ?: return refused()
@@ -198,6 +267,12 @@ class SignInPage(
 
         /** The page that is open, if any; the service-worker filter refuses everything when none is. */
         @Volatile private var current: SignInPage? = null
+
+        /** Printable ASCII only, at most 80 characters: an error description, never a page's own text. */
+        private fun safeText(s: String?): String {
+            val t = s.orEmpty().filter { it in ' '..'~' }.take(80)
+            return t.ifEmpty { "no description" }
+        }
 
         /** An empty 403 with no body. */
         private fun refused() = WebResourceResponse("text/plain", "utf-8", 403, "Forbidden", emptyMap(), ByteArrayInputStream(ByteArray(0)))
