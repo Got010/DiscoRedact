@@ -2,9 +2,10 @@ package app.discoredact.ui.signin
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
-import android.graphics.Bitmap
+import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.ServiceWorkerClient
@@ -107,6 +108,10 @@ class SignInPage(
     @SuppressLint("SetJavaScriptEnabled") // Discord's login page needs script and DOM storage; the app adds no script of its own.
     fun open(context: Context): WebView {
         val view = WebView(context)
+        // Compose adds the view with wrap-content params, and Chromium lays the page out from those, not from the size
+        // the view is measured at: a wrap-content height means a zero-height page, and a page built on `height: 100%`
+        // (Discord's client) then draws nothing. Match the parent so the page gets the view's real height.
+        view.layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         view.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -130,6 +135,7 @@ class SignInPage(
             override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
                 if (ended.get()) return
                 documentStarted = true
+                documentFinished = false
                 loadStatus()
             }
 
@@ -151,10 +157,14 @@ class SignInPage(
                 status(PageStatus.Failed("HTTP ${errorResponse.statusCode}"))
             }
 
-            // Returning true keeps the app alive when the WebView's renderer is gone; the view shows nothing from then on.
+            // Returning true keeps the app alive when the WebView's renderer is gone. The page is ended at once (the
+            // dead view is cleared and destroyed; Close disposes it), and the screen says so; main thread.
             override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                if (ended.get()) return true
                 documentFailed = true
-                status(PageStatus.Failed(if (detail.didCrash()) "the page's renderer crashed" else "the page's renderer was stopped by the system"))
+                val what = if (detail.didCrash()) "the page's renderer crashed" else "the page's renderer was stopped by the system"
+                openedIn?.let { end(it) }
+                onStatus(PageStatus.Failed(what))
                 return true
             }
         }
@@ -238,13 +248,19 @@ class SignInPage(
         if (labels.size < MAX_LABELS && labels.add(label)) main.post { onBlocked(label) }
     }
 
+    /**
+     * One status at a time, in order, from any thread; a status posted for a page that has since ended is dropped, so
+     * nothing overwrites "Captured" or the Ended text.
+     */
+    @Synchronized
     private fun status(s: PageStatus) {
         if (s == lastStatus) return
         lastStatus = s
-        main.post { onStatus(s) }
+        main.post { if (!ended.get()) onStatus(s) }
     }
 
     /** The document's loading state with the admitted count; silent once it failed or a capture outcome is showing. */
+    @Synchronized
     private fun loadStatus() {
         if (documentFailed || !documentStarted) return
         val last = lastStatus
